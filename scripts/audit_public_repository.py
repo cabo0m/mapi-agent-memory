@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -17,10 +18,12 @@ LICENSE_PATH = ROOT / "LICENSE"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-AUDIT_SCHEMA = "mapi_public_audit.v2"
+AUDIT_SCHEMA = "mapi_public_audit.v3"
 ALLOWED_AUTHOR_NAME = "Michał Chlewicki"
 ALLOWED_PUBLIC_EMAIL = "info@morenatech.work"
 EXPECTED_APACHE_LICENSE_SHA256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+CANONICAL_HTTPS_ORIGIN = "https://github.com/cabo0m/mapi-agent-memory.git"
+CANONICAL_SSH_ORIGIN = "git@github.com:cabo0m/mapi-agent-memory.git"
 
 FORBIDDEN_SUFFIXES = {
     ".7z",
@@ -108,7 +111,11 @@ def _tracked_candidate_paths() -> list[Path]:
         (
             path
             for path in ROOT.rglob("*")
-            if path.is_file() and not any(part in ignored for part in path.relative_to(ROOT).parts)
+            if path.is_file()
+            and not any(
+                part in ignored or part.startswith(".pytest_tmp")
+                for part in path.relative_to(ROOT).parts
+            )
         ),
         key=lambda path: path.as_posix(),
     )
@@ -138,6 +145,89 @@ def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
     )
+
+
+def _config_values(key: str) -> list[str]:
+    result = _git("config", "--get-all", key, check=False)
+    if result.returncode not in {0, 1}:
+        return []
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def _canonical_origin(url: str) -> str | None:
+    accepted = {
+        CANONICAL_HTTPS_ORIGIN: CANONICAL_HTTPS_ORIGIN,
+        CANONICAL_HTTPS_ORIGIN.removesuffix(".git"): CANONICAL_HTTPS_ORIGIN,
+        CANONICAL_SSH_ORIGIN: CANONICAL_SSH_ORIGIN,
+        CANONICAL_SSH_ORIGIN.removesuffix(".git"): CANONICAL_SSH_ORIGIN,
+    }
+    return accepted.get(url)
+
+
+def _scan_remote_policy(
+    failures: list[dict[str, str]],
+    result: dict[str, Any],
+) -> None:
+    remote_names = [line for line in _git("remote").stdout.splitlines() if line]
+    configured_urls = _git(
+        "config",
+        "--get-regexp",
+        r"^remote\..*\.(?:url|pushurl)$",
+        check=False,
+    )
+    configured_url_lines = [
+        line for line in configured_urls.stdout.splitlines() if line
+    ]
+    result["remotes"] = remote_names
+
+    if not remote_names and not configured_url_lines:
+        result["repository_state"] = "release_candidate"
+        result["canonical_origin"] = None
+        return
+
+    result["repository_state"] = "invalid"
+    result["canonical_origin"] = None
+    if remote_names != ["origin"]:
+        _failure(failures, ".git", "unexpected_remote_names")
+        return
+
+    fetch_urls = _config_values("remote.origin.url")
+    push_urls = _config_values("remote.origin.pushurl")
+    if len(fetch_urls) != 1:
+        _failure(failures, ".git", "unexpected_origin_fetch_url_count")
+        return
+    if len(push_urls) > 1:
+        _failure(failures, ".git", "unexpected_origin_push_url_count")
+        return
+
+    fetch_canonical = _canonical_origin(fetch_urls[0])
+    push_canonical = _canonical_origin(push_urls[0]) if push_urls else fetch_canonical
+    if fetch_canonical is None:
+        _failure(failures, ".git", "origin_fetch_url_not_canonical")
+        return
+    if push_canonical is None:
+        _failure(failures, ".git", "origin_push_url_not_canonical")
+        return
+
+    effective_fetch = [
+        line
+        for line in _git("remote", "get-url", "--all", "origin").stdout.splitlines()
+        if line
+    ]
+    effective_push = [
+        line
+        for line in _git("remote", "get-url", "--push", "--all", "origin").stdout.splitlines()
+        if line
+    ]
+    if len(effective_fetch) != 1 or _canonical_origin(effective_fetch[0]) is None:
+        _failure(failures, ".git", "origin_fetch_url_rewritten")
+        return
+    if len(effective_push) != 1 or _canonical_origin(effective_push[0]) is None:
+        _failure(failures, ".git", "origin_push_url_rewritten")
+        return
+
+    result["repository_state"] = "published"
+    result["canonical_origin"] = fetch_canonical
 
 
 def _public_language_paths(paths: list[Path]) -> list[Path]:
@@ -237,6 +327,8 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
         "remotes": [],
         "notes": [],
         "reachable_blobs": 0,
+        "repository_state": "invalid",
+        "canonical_origin": None,
     }
     if not result["available"]:
         _failure(failures, ".git", "git_repository_missing")
@@ -245,8 +337,8 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
     private_email = bytes.fromhex(FORBIDDEN_PRIVATE_EMAIL_HEX).decode("ascii")
     commits = [line for line in _git("rev-list", "--all").stdout.splitlines() if line]
     result["commit_count"] = len(commits)
-    if len(commits) != 1:
-        _failure(failures, ".git", "unexpected_commit_count", str(len(commits)))
+    if not commits:
+        _failure(failures, ".git", "git_history_missing")
 
     branches = [
         line
@@ -271,12 +363,7 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
     if notes:
         _failure(failures, ".git", "git_notes_not_allowed", ",".join(notes))
 
-    remote_names = [line for line in _git("remote").stdout.splitlines() if line]
-    remote_urls_result = _git("config", "--get-regexp", r"^remote\..*\.url$", check=False)
-    remote_urls = [line for line in remote_urls_result.stdout.splitlines() if line]
-    result["remotes"] = remote_names
-    if remote_names or remote_urls:
-        _failure(failures, ".git", "remotes_not_allowed", ";".join(remote_urls or remote_names))
+    _scan_remote_policy(failures, result)
 
     forbidden_text = tuple(bytes.fromhex(value).decode("utf-8") for value in FORBIDDEN_TEXT_HEX)
     blob_ids: set[str] = set()
@@ -318,6 +405,9 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
     logs_root = ROOT / ".git" / "logs"
     if logs_root.exists():
         for path in logs_root.rglob("*"):
+            relative_log = path.relative_to(logs_root)
+            if relative_log.parts[:2] == ("refs", "remotes"):
+                continue
             if path.is_file() and private_email.casefold() in path.read_text(
                 encoding="utf-8", errors="replace"
             ).casefold():
@@ -401,12 +491,48 @@ def audit_repository() -> dict[str, Any]:
         "manifest_sha256": hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest(),
         "language_files_checked": language_checked,
         **license_result,
+        "repository_state": git_result["repository_state"],
+        "canonical_origin": git_result["canonical_origin"],
         "git": git_result,
         "failures": failures,
     }
 
 
+def regenerate_manifest() -> dict[str, Any]:
+    existing = _load_json(MANIFEST_PATH)
+    files = [
+        path.relative_to(ROOT).as_posix()
+        for path in _tracked_candidate_paths()
+    ]
+    manifest = {
+        "schema": existing["schema"],
+        "source_commit": existing["source_commit"],
+        "files": files,
+    }
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "written",
+        "path": MANIFEST_PATH.relative_to(ROOT).as_posix(),
+        "file_count": len(files),
+        "manifest_sha256": hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest(),
+    }
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Audit the sanitized public repository.")
+    parser.add_argument(
+        "--write-manifest",
+        action="store_true",
+        help="regenerate the canonical tracked-file inventory before auditing",
+    )
+    args = parser.parse_args()
+    if args.write_manifest:
+        print(json.dumps(regenerate_manifest(), indent=2))
+        return
+
     result = audit_repository()
     print(json.dumps(result, indent=2))
     if result["status"] != "ok":

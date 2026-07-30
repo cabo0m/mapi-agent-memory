@@ -1,8 +1,8 @@
 # Public release audit
 
-Status: **TECHNICAL AND LICENSING GATES PASSED**
+Status: **PUBLISHED — TECHNICAL AND LICENSING GATES PASSED**
 
-Publication recommendation: **GO FOR MANUAL GITHUB PUBLICATION**
+Public repository: **https://github.com/cabo0m/mapi-agent-memory**
 
 | Field | Result |
 |---|---|
@@ -21,18 +21,18 @@ Publication recommendation: **GO FOR MANUAL GITHUB PUBLICATION**
 | Public contact | `info@morenatech.work` |
 | Windows clean install | passed on Windows 11 with CPython 3.12.10; non-editable install, migration, repeatable seed, doctor, server, and real MCP smoke |
 | Linux clean install | passed on Ubuntu 24.04.3 LTS under WSL2 with CPython 3.12.3; isolated offline wheel install, migration, repeatable seed, doctor, server, real MCP smoke, and 11 focused tests |
-| Full pytest | 313 passed; the final Git-metadata invariant was deferred until the root rewrite and is rerun after amend |
+| Full pytest | the clean full suite covers both model-free core and optional semantic tests; CI runs the two groups separately |
 | Static and compilation checks | Ruff passed; Python compilation passed |
 | Model-free startup | passed on Windows and Linux with semantic and Gemini extras disabled |
 | Privacy and secret scan | passed for tracked files; narrow reviewed scanner/fixture exceptions remain explicit |
-| Git metadata scan | audit v2 checks every reachable commit and blob, author/committer data, branches, remotes, tags, notes, commit messages, and reflogs; final result is recorded after amend |
+| Git metadata scan | audit v3 checks every reachable commit and blob, author/committer data, branches, tags, notes, commit messages, and local reflogs; it accepts either no remote for a release candidate or exactly one canonical public `origin` after publication |
 | English-only documentation | passed for 30 public documentation/configuration/CLI files and the effective workshop catalogue |
 | Binary inventory | passed; no unapproved binary, database, archive, log, or model artifact |
 | Dependency inventory | documented in `DEPENDENCIES.md` |
 | Publication blockers | none |
 
 The final manifest SHA-256 is
-`d6ec6883a44e3f11607dc3cfd03ac0a23d050d37faadaa6a4a4de5e06bfaba4b`.
+`014142be5e7c0f733fef3a59765a4bba452aa1fdde42ae28eb2d5db5ef8872c9`.
 The exact Apache License 2.0 text has normalized SHA-256
 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`.
 
@@ -41,5 +41,14 @@ document changes the commit object and therefore changes that SHA. The
 repository records the authoritative value through `git rev-parse HEAD`; the
 exact immutable result is also included in the final release report.
 
-No GitHub repository, remote, tag, release, package upload, or push is part of
-this audit.
+The audit recognizes two explicit repository states:
+
+- `release_candidate`: no remotes;
+- `published`: exactly one `origin` resolving to
+  `https://github.com/cabo0m/mapi-agent-memory.git` or its canonical SSH form.
+
+Arbitrary owners, repositories, protocols, credentials, query strings,
+fragments, extra remotes, extra push URLs, and target-changing `insteadOf`
+rewrites remain forbidden. Transport-generated remote-tracking reflogs are
+local Git state and are not part of the published history; local branch and
+HEAD reflogs remain scanned.

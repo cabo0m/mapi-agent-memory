@@ -42,7 +42,8 @@
 
 ## Compatibility differences
 
-- new Git history and no remotes;
+- new public Git history; the audit accepts no remote before publication or
+  exactly one canonical `origin` for `cabo0m/mapi-agent-memory` afterward;
 - Apache License 2.0 instead of an undecided distribution status;
 - `reader`, `agent`, `maintainer`, `admin` profiles;
 - `admin` requires an additional explicit enablement gate;
@@ -51,3 +52,8 @@
 - single-instance public positioning, no onboarding product.
 
 The exact allowlisted file inventory is machine-readable in `public_file_manifest.json`.
+Regenerate it through the audit tool rather than editing it manually:
+
+```bash
+python scripts/audit_public_repository.py --write-manifest
+```

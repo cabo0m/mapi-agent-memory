@@ -14,6 +14,8 @@ macOS is expected to work for the model-free core but is not verified.
 - a writable local data directory.
 
 No model provider, API key, GPU or model download is required.
+The core package includes lightweight `tzdata` so named IANA timezones remain
+available when the operating system does not provide a timezone database.
 
 ## Source and development installation
 
@@ -51,6 +53,8 @@ pip install -e ".[gemini]"
 ```
 
 Install extras only when the feature will be configured and tested.
+The semantic extra may install model libraries, but core installation and core
+CI do not install or import them.
 
 ## Upgrade
 

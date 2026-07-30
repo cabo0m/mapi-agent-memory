@@ -5,10 +5,34 @@ Testy regresyjne dla vector_store i narzędzi MAPI search_semantic/backfill.
 import sys
 import os
 import sqlite3
-import struct
+import hashlib
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+pytestmark = pytest.mark.semantic
+
+
+class _DeterministicVector(list[float]):
+    def tolist(self) -> list[float]:
+        return list(self)
+
+
+class _DeterministicEmbeddingModel:
+    def encode(self, text: str, *, normalize_embeddings: bool) -> _DeterministicVector:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        values = [float(digest[index % len(digest)] + 1) for index in range(384)]
+        if normalize_embeddings:
+            magnitude = sum(value * value for value in values) ** 0.5
+            values = [value / magnitude for value in values]
+        return _DeterministicVector(values)
+
+
+@pytest.fixture(autouse=True)
+def _use_deterministic_local_embeddings(monkeypatch):
+    import vector_store
+
+    monkeypatch.setattr(vector_store, "_model", _DeterministicEmbeddingModel())
 
 
 # ---------------------------------------------------------------------------

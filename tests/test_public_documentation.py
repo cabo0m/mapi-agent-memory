@@ -4,6 +4,7 @@ import re
 import subprocess
 import tomllib
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -24,6 +25,37 @@ def _markdown_files() -> list[Path]:
         [*ROOT.glob("*.md"), *ROOT.joinpath("docs").rglob("*.md")],
         key=lambda path: path.as_posix(),
     )
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+
+
+def _temporary_public_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "public-repository"
+    repository.mkdir()
+    _git(repository, "init", "--initial-branch=main")
+    _git(repository, "config", "user.name", public_audit.ALLOWED_AUTHOR_NAME)
+    _git(repository, "config", "user.email", public_audit.ALLOWED_PUBLIC_EMAIL)
+    repository.joinpath("README.md").write_text("# Public test repository\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-m", "Initial public test commit")
+    return repository
+
+
+def _scan_temporary_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    repository: Path,
+) -> tuple[dict[str, object], list[dict[str, str]]]:
+    monkeypatch.setattr(public_audit, "ROOT", repository)
+    failures: list[dict[str, str]] = []
+    return public_audit._scan_git_metadata(failures), failures
 
 
 def test_readme_quickstart_matches_console_entry_points() -> None:
@@ -130,6 +162,141 @@ def test_license_and_public_email_are_consistent() -> None:
         ).casefold()
 
 
+def test_runtime_dependencies_include_timezone_data() -> None:
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = metadata["project"]["dependencies"]
+    assert any(dependency.startswith("tzdata>=") for dependency in dependencies)
+    assert ZoneInfo("Europe/Warsaw").key == "Europe/Warsaw"
+
+
+def test_git_policy_accepts_release_candidate_without_remote(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "release_candidate"
+    assert result["canonical_origin"] is None
+    assert failures == []
+
+
+@pytest.mark.parametrize(
+    ("origin", "canonical"),
+    [
+        (public_audit.CANONICAL_HTTPS_ORIGIN, public_audit.CANONICAL_HTTPS_ORIGIN),
+        (public_audit.CANONICAL_SSH_ORIGIN, public_audit.CANONICAL_SSH_ORIGIN),
+        (
+            public_audit.CANONICAL_HTTPS_ORIGIN.removesuffix(".git"),
+            public_audit.CANONICAL_HTTPS_ORIGIN,
+        ),
+    ],
+)
+def test_git_policy_accepts_canonical_published_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str,
+    canonical: str,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", origin)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "published"
+    assert result["canonical_origin"] == canonical
+    assert failures == []
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/another-owner/mapi-agent-memory.git",
+        "https://github.com/cabo0m/another-repository.git",
+        "https://user:token@github.com/cabo0m/mapi-agent-memory.git",
+        "https://github.com/cabo0m/mapi-agent-memory.git?token=secret",
+        "https://github.com/cabo0m/mapi-agent-memory.git#fragment",
+        "ftp://github.com/cabo0m/mapi-agent-memory.git",
+    ],
+)
+def test_git_policy_rejects_noncanonical_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", origin)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "invalid"
+    assert {failure["rule"] for failure in failures} == {
+        "origin_fetch_url_not_canonical"
+    }
+
+
+def test_git_policy_rejects_second_remote(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", public_audit.CANONICAL_HTTPS_ORIGIN)
+    _git(repository, "remote", "add", "backup", public_audit.CANONICAL_HTTPS_ORIGIN)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "invalid"
+    assert {failure["rule"] for failure in failures} == {"unexpected_remote_names"}
+
+
+def test_git_policy_rejects_second_push_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", public_audit.CANONICAL_HTTPS_ORIGIN)
+    _git(repository, "config", "--add", "remote.origin.pushurl", public_audit.CANONICAL_HTTPS_ORIGIN)
+    _git(repository, "config", "--add", "remote.origin.pushurl", public_audit.CANONICAL_SSH_ORIGIN)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "invalid"
+    assert {failure["rule"] for failure in failures} == {
+        "unexpected_origin_push_url_count"
+    }
+
+
+def test_git_policy_rejects_instead_of_rewriting_to_another_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", public_audit.CANONICAL_HTTPS_ORIGIN)
+    _git(
+        repository,
+        "config",
+        "url.https://github.com/another-owner/.insteadOf",
+        "https://github.com/cabo0m/",
+    )
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "invalid"
+    assert {failure["rule"] for failure in failures} == {"origin_fetch_url_rewritten"}
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://"
+        + bytes.fromhex(public_audit.FORBIDDEN_PRIVATE_EMAIL_HEX).decode("ascii")
+        + "@github.com/cabo0m/mapi-agent-memory.git",
+        bytes.fromhex(public_audit.FORBIDDEN_TEXT_HEX[2]).decode("utf-8"),
+    ],
+)
+def test_git_policy_rejects_private_origin_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    _git(repository, "remote", "add", "origin", origin)
+    result, failures = _scan_temporary_repository(monkeypatch, repository)
+    assert result["repository_state"] == "invalid"
+    assert {failure["rule"] for failure in failures} == {
+        "origin_fetch_url_not_canonical"
+    }
+
+
 def test_clean_release_git_metadata_passes_public_policy() -> None:
     status = subprocess.run(
         ["git", "-C", str(ROOT), "status", "--porcelain=v1"],
@@ -142,5 +309,7 @@ def test_clean_release_git_metadata_passes_public_policy() -> None:
         pytest.skip("Git metadata invariant is evaluated after the release tree is committed")
     failures: list[dict[str, str]] = []
     result = public_audit._scan_git_metadata(failures)
-    assert result["commit_count"] == 1
+    assert result["commit_count"] >= 1
+    assert result["repository_state"] == "published"
+    assert result["canonical_origin"] == public_audit.CANONICAL_HTTPS_ORIGIN
     assert failures == []

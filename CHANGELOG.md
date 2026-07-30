@@ -12,3 +12,7 @@
 - selected Apache License 2.0 and finalized public author/security metadata;
 - expanded the implementation guide and release auditing for documentation,
   license, language, and Git metadata.
+- separated model-free core CI from optional semantic-search CI;
+- added lightweight IANA timezone data for consistent Windows runtime behavior;
+- updated the public audit to accept either an unpublished release candidate or
+  the single canonical public GitHub origin.
