@@ -1,0 +1,29 @@
+# Deployment
+
+## Localhost development
+
+The supported default is `127.0.0.1:8015`, one MAPI process and one SQLite writer.
+
+## Private LAN or single server
+
+Bind beyond loopback only behind an authenticated reverse proxy with TLS. Keep `admin` disabled remotely. Restrict filesystem permissions for the data, backup and log directories. Use a persistent local volume and avoid network filesystems for SQLite.
+
+## Reverse proxy
+
+Preserve HTTP streaming required by MCP, enforce request limits/timeouts and terminate TLS. Authentication must map to an allowed profile outside untrusted payloads.
+
+## Persistence and backups
+
+Mount a persistent directory for `MAPI_DATA_DIR`. Use SQLite-consistent backups, checksums and restore drills. Expect one writer; scale readers or services only after designing database coordination.
+
+## Health and shutdown
+
+Run `mapi-doctor` and a protocol-aware MCP smoke test. Configure graceful process termination and wait for SQLite transactions to close.
+
+## Upgrade and rollback
+
+Back up, stop, upgrade, migrate, doctor and smoke test. Restore both prior code and the matching verified database backup for rollback.
+
+## Docker
+
+Docker packaging is intentionally omitted because this candidate has not completed a tested non-root image and volume/health-check gate. Decorative container files would create a false support claim.

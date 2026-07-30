@@ -1,0 +1,13 @@
+{
+  "app/sandman/corpora/semantic_evaluation_v1.json": [
+    "private_key"
+  ],
+  "scripts/audit_public_repository.py": [
+    "absolute_path",
+    "generic_secret"
+  ],
+  "tests/test_sandman_v3_redaction.py": [
+    "bearer_token",
+    "private_key"
+  ]
+}

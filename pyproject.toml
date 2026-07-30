@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mapi-agent-memory"
+version = "0.1.0rc1"
+description = "Auditable memory and governance for AI agents"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Michał Chlewicki", email = "info@morenatech.work" }]
+maintainers = [{ name = "Michał Chlewicki", email = "info@morenatech.work" }]
+license = "Apache-2.0"
+dependencies = [
+  "fastmcp>=3.2,<4",
+  "pydantic>=2.11,<3",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+semantic = [
+  "sentence-transformers>=5.0,<6",
+  "sqlite-vec>=0.1.6,<0.2",
+]
+gemini = [
+  "google-genai>=1.0,<3",
+  "json-repair>=0.30,<1",
+]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+mapi-server = "mapi.cli:server"
+mapi-migrate = "mapi.cli:migrate"
+mapi-doctor = "mapi.cli:doctor"
+mapi-seed-demo = "mapi.cli:seed_demo"
+mapi-capabilities = "mapi.capabilities:main"
+
+[tool.setuptools]
+py-modules = [
+  "auto_link_memories",
+  "mcp_surface",
+  "memory_bootstrap_policy",
+  "sandman_policy",
+  "server",
+  "server_core",
+  "vector_store",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "mapi*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -p no:cacheprovider"
+markers = [
+  "semantic: requires the semantic optional extra",
+]
