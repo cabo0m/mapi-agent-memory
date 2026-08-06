@@ -1,9 +1,9 @@
 # Known limitations
 
-- Public Release Candidate; license unresolved.
+- Public Release Candidate / Developer Preview, licensed under Apache License 2.0.
 - SQLite single-writer behavior limits concurrent mutation workloads.
 - No built-in public multi-tenant onboarding or hosted SaaS control plane.
-- Remote authentication is deployment responsibility; remote admin is prohibited.
+- Remote authentication is experimental and remains the deployment operator's responsibility; remote admin is prohibited.
 - Compatibility-only schema/code from earlier development remains isolated and inactive.
 - Semantic search may download a model and is not part of model-free startup.
 - Model providers are optional, external and proposal-only.

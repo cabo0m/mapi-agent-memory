@@ -20,6 +20,8 @@ available when the operating system does not provide a timezone database.
 ## Source and development installation
 
 ```bash
+git clone https://github.com/cabo0m/mapi-agent-memory.git
+cd mapi-agent-memory
 python -m venv .venv
 ```
 
@@ -44,6 +46,8 @@ mapi-seed-demo
 mapi-doctor
 mapi-server
 ```
+
+In another activated shell, run `python scripts/smoke_mcp.py` and `mapi-demo`.
 
 ## Optional extras
 

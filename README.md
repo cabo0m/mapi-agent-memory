@@ -1,65 +1,63 @@
 # MAPI
 
-**Auditable memory and governance for AI agents**
+**Persistent project memory for Codex, ChatGPT and other MCP clients.**
 
-MAPI is an auditable memory, lifecycle and governance server for AI agents, exposed through the Model Context Protocol (MCP).
+MAPI helps AI assistants retain project decisions, corrections, rules, progress and next steps across sessions and tools.
+
+Self-hosted • Local-first • Auditable • Apache 2.0
 
 > Status: **Public Release Candidate / Developer Preview**
 
-Licensed under Apache License 2.0.
+## Does your AI assistant forget what you worked on yesterday?
 
-## Why durable agent memory needs governance
+A new session can lose project decisions, corrections, completed work and next steps. MAPI provides durable project memory that MCP-compatible clients can search and update under user control. It complements client-provided chat history and memory features; it does not claim that those features do not exist.
 
-Chat history is session context, not a durable and inspectable memory system. A vector index can improve similarity search, but it does not establish provenance, current state, supersession, review policy, conflict handling or rollback. MAPI treats writes as explicit operations, preserves lineage and puts dangerous maintenance behind permissions and preview-oriented workflows.
+> Chat history remembers a conversation. MAPI remembers the project.
 
-## What MAPI provides
+MAPI is an independent, self-hosted memory service that can be shared by different MCP clients. The database and access boundary remain under the operator's control.
 
-- durable, project-aware memories and lexical retrieval;
-- relationships, provenance and memory timelines;
-- lifecycle state, lineage and supersession;
-- guarded preview/apply/rollback workflows;
-- conflict detection, review and capture reconciliation;
-- retention, quality and owner-governance tools;
-- optional semantic retrieval and model-provider integrations;
-- proposal-only Sandman maintenance;
-- fail-closed permission profiles and compact MCP workshops.
-
-## What MAPI is not
-
-MAPI is not a hosted SaaS, an autonomous agent, an LLM, or merely a vector database. It does not replace application-level authentication or authorization. The local admin surface is powerful and must not be exposed remotely without an independent security boundary.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    C["MCP client"] --> H["FastMCP HTTP runtime"]
-    H --> S["Compact MCP surface"]
-    S --> P["Profile and risk guard"]
-    P --> R["Workshop registry"]
-    R --> M["Memory and lifecycle services"]
-    R --> G["Governance and timeline"]
-    M --> D[("SQLite")]
-    G --> D
-    M -. optional .-> V["Semantic layer"]
-    G -. proposal only .-> O["Optional model providers"]
-    M --> A["Audit and rollback records"]
-```
-
-The thin entry point is [`server.py`](server.py). Runtime composition lives in `app/runtime`, action metadata in `app/workshops`, and business operations in `app/memory` and related service modules.
-
-## Safety model
+## A decision changes, but its history remains
 
 ```text
-preview -> explicit apply -> audit -> rollback
+Yesterday:
+Use SQLite for the application database.
+
+Today:
+Replace SQLite with PostgreSQL.
+
+Current state:
+PostgreSQL
+
+History:
+SQLite -> superseded by PostgreSQL
 ```
 
-Workshop actions carry risk classes (`R0` through `R3`) and minimum profiles. Unknown profiles fail closed to `reader`. The default `agent` profile cannot access the admin workshop. Selecting `admin` also requires `MAPI_ADMIN_TOOLS_ENABLED=true`. External provider output is untrusted, validated and proposal-only; providers are disabled by default.
+MAPI can preserve the earlier decision, mark its replacement as current, retain the lineage and keep historical context out of the active state.
 
-## Five-minute quickstart
+## Why MAPI
+
+- persistent project memory;
+- shared memory between MCP clients;
+- project-aware isolation;
+- provenance and confidence metadata;
+- current state with preserved history;
+- decision supersession and refinement;
+- conflict detection and review;
+- audited preview, apply and rollback.
+
+## Product status and boundaries
+
+This developer preview is self-hosted. A local runtime is the supported default, and the model-free core needs no external model, API key, GPU or semantic extra. MAPI is not a hosted SaaS, a one-click extension, an LLM, an autonomous agent or a guarantee that a model will answer correctly.
+
+ChatGPT web cannot connect directly to localhost: it requires a remote HTTPS endpoint, authentication and a safe network boundary. Docker and macOS remain unverified. SQLite has single-writer characteristics, so use one controlled writer.
+
+## Install and run
 
 Python 3.11 or 3.12 is required.
 
 ```bash
+git clone https://github.com/cabo0m/mapi-agent-memory.git
+cd mapi-agent-memory
 python -m venv .venv
 ```
 
@@ -87,20 +85,78 @@ mapi-doctor
 mapi-server
 ```
 
-The server binds to `http://127.0.0.1:8015/mcp/`. The quickstart performs no external model calls and does not download a model.
+The verified local endpoint is:
 
-In another shell, run the verified protocol smoke:
+```text
+http://127.0.0.1:8015/mcp/
+```
+
+The quickstart performs no external model calls and downloads no model. In another activated shell, verify the protocol:
 
 ```bash
 python scripts/smoke_mcp.py
 ```
 
-The smoke writes one deterministic fictional verification memory, searches and
-reads it, inspects links and verifies that the admin workshop is denied.
+The smoke uses the safe `agent` profile, writes a fictional record, searches and reads it, checks links and timeline access, and confirms that admin is denied.
 
-## MCP client connection
+## Run the product demo
 
-Generic client configuration:
+```bash
+mapi-demo
+```
+
+Equivalent source-checkout command:
+
+```bash
+python scripts/demo_project_memory.py
+```
+
+The demo uses a temporary isolated database, no external model and the existing guarded supersession contract. It exits with an error if current state, history or the relationship is wrong. Example output:
+
+```text
+Current decision: PostgreSQL
+Previous decision: SQLite
+Relationship: PostgreSQL supersedes SQLite
+Current record ID: 2
+Previous record ID: 1
+Preview hash: <sha256>
+```
+
+For a controlled lifecycle verification with a disposable database and the `maintainer`
+profile, while confirming that admin remains denied, run:
+
+```bash
+python scripts/smoke_mcp_lifecycle.py
+```
+
+## Connect an MCP client
+
+### Codex
+
+Start MAPI, then add this Streamable HTTP server to `~/.codex/config.toml` or a
+trusted project's `.codex/config.toml`:
+
+```toml
+[mcp_servers.mapi]
+url = "http://127.0.0.1:8015/mcp/"
+```
+
+Reload Codex, confirm the server with `codex mcp list` or `/mcp`, call
+`bootstrap_agent_context` for the project and search with `find_memories` before
+writing. See the [verified integration sequence](docs/MCP_INTEGRATION.md#codex).
+
+### ChatGPT desktop
+
+Current ChatGPT desktop builds with MCP server settings can add a Streamable HTTP URL
+under **Settings -> MCP servers** and require a restart after saving. Availability can
+still depend on the distributed application version and workspace controls; support is
+not promised for every plan or managed workspace.
+
+### ChatGPT web
+
+The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Never expose the admin surface remotely; this quickstart is not a public-hosting tutorial.
+
+### Generic MCP client
 
 ```json
 {
@@ -113,101 +169,63 @@ Generic client configuration:
 }
 ```
 
-The endpoint and HTTP transport are verified. No named third-party client integration is claimed by this release candidate. See [MCP integration](docs/MCP_INTEGRATION.md).
+The endpoint and HTTP MCP transport are covered by the protocol smoke. Client-specific configuration keys may differ.
 
-## Example workflow
+## Recommended memory workflow
 
-1. Call `bootstrap_agent_context` for `demo-project`.
-2. Search with `find_memories`.
-3. Inspect a selected memory and its links.
-4. Save an explicitly authorized memory or submit a proposal.
-5. Preview a lifecycle or retention action.
-6. Apply only with an authorized profile and explicit approval.
-7. Inspect the audit/timeline record and retain rollback material.
+1. Call `bootstrap_agent_context` for the project.
+2. Search with `find_memories` before creating another record.
+3. Inspect a selected record and its links.
+4. Use `save_memory` only for an explicitly authorized durable write; use `propose_memory` for uncertain agent-generated material.
+5. Preview guarded lifecycle work, retain the preview hash and apply only with the required profile and approval.
+6. Inspect current state, timeline and audit evidence; use rollback only under its documented guard.
 
-## Capability overview
+## Architecture and safety
 
-| Workshop | Purpose |
-|---|---|
-| `memory` | Memory creation, retrieval, lineage, lifecycle and retention |
-| `timeline` | Project and memory event history |
-| `conflicts` | Conflict reports and guarded decisions |
-| `governance` | Quality, queues, SLA and observability |
-| `owner_catalog` | Owner catalogue and responsibility checks |
-| `feature_flags` | Flag inspection and controlled updates |
-| `research_ingest` | Quarantined research review |
-| `semantic` | Optional semantic retrieval |
-| `sandman` | Deterministic and proposal-only maintenance |
-| `memory_linking` | Previewed deterministic linking |
-| `gemma` | Optional local-model worker functions |
-| `admin` | Dangerous local operator functions, hidden by default |
+```mermaid
+flowchart LR
+    C["MCP client"] --> H["FastMCP HTTP runtime"]
+    H --> S["Compact MCP surface"]
+    S --> P["Profile and risk guard"]
+    P --> W["Memory and governance workshops"]
+    W --> D[("SQLite")]
+    W --> A["Audit, lineage and rollback records"]
+    W -. optional .-> O["Semantic or model providers"]
+```
 
-The authoritative generated catalogue is [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+The safety pattern is `preview -> explicit apply -> audit -> rollback`. Unknown profiles fail closed to `reader`; the default is `agent`. Admin requires both the `admin` profile and `MAPI_ADMIN_TOOLS_ENABLED=true`. Optional provider output is untrusted and proposal-only.
 
-## Technology stack
-
-- Python 3.11/3.12;
-- FastMCP and its HTTP runtime;
-- SQLite;
-- Pydantic;
-- optional `sqlite-vec` and `sentence-transformers`;
-- optional Google GenAI and JSON repair support.
+The thin entry point is [`server.py`](server.py). Runtime composition lives in `app/runtime`, action metadata in `app/workshops`, and core operations in `app/memory` and related services. The generated action catalogue is [docs/CAPABILITIES.md](docs/CAPABILITIES.md); it is intentionally not the product introduction.
 
 ## Documentation
 
+- [Documentation map](docs/README.md)
 - [Installation](docs/INSTALLATION.md)
+- [MCP integration](docs/MCP_INTEGRATION.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [MCP integration](docs/MCP_INTEGRATION.md)
-- [Implementation guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Data model](docs/DATA_MODEL.md)
 - [Security model](docs/SECURITY_MODEL.md)
-- [Operations](docs/OPERATIONS.md)
 - [Deployment](docs/DEPLOYMENT.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Development](docs/DEVELOPMENT.md)
-- [Dependencies](docs/DEPENDENCIES.md)
+- [Comparison](docs/COMPARISON.md)
 - [Known limitations](docs/KNOWN_LIMITATIONS.md)
-- [Public export manifest](docs/PUBLIC_EXPORT_MANIFEST.md)
+- [Directory submission package](docs/PUBLIC_DIRECTORY_SUBMISSIONS.md)
+- [RC2 draft release notes](docs/RELEASE_NOTES_0.1.0_RC2.md)
 - [Public release audit](docs/PUBLIC_RELEASE_AUDIT.md)
 
-## Security and privacy
-
-The default bind is loopback-only and the default profile is `agent`. No real memories, database, logs, backups, tokens or private deployment configuration are included. Review [SECURITY.md](SECURITY.md) and the [security model](docs/SECURITY_MODEL.md) before changing network exposure or profiles.
-
-## Development and tests
+## Development and release gates
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest -q
 ruff check .
+python -m compileall -q app mapi scripts tests
+mapi-capabilities
+git diff --exit-code -- docs/CAPABILITIES.md
 python scripts/audit_public_repository.py
 git diff --check
 ```
 
-Regenerate the capability catalogue after workshop changes:
-
-```bash
-mapi-capabilities
-```
-
-## Known limitations
-
-- SQLite has single-writer characteristics.
-- This release is single-instance and does not provide public multi-tenant onboarding.
-- Semantic retrieval and model providers are optional and may require network downloads or credentials.
-- Admin tools require an external authentication boundary for any non-local deployment.
-- Docker packaging and macOS verification are not included in this candidate.
-- Some schema migrations retain compatibility tables from earlier private development; inactive product flows are not exported.
-
-## Roadmap
-
-- complete manual publication review;
-- reduce compatibility-only schema and code behind explicit migrations;
-- expand clean-install and client integration coverage;
-- add tested container packaging.
-
 ## License
 
-MAPI is licensed under the [Apache License 2.0](LICENSE). See the
-[licensing guide](docs/LICENSING.md) for redistribution and contribution terms.
+MAPI is licensed under the [Apache License 2.0](LICENSE). See the [licensing guide](docs/LICENSING.md).

@@ -8,6 +8,8 @@ The supported default is `127.0.0.1:8015`, one MAPI process and one SQLite write
 
 Bind beyond loopback only behind an authenticated reverse proxy with TLS. Keep `admin` disabled remotely. Restrict filesystem permissions for the data, backup and log directories. Use a persistent local volume and avoid network filesystems for SQLite.
 
+Remote authentication integration remains experimental in this release and is outside the quickstart. Treat the reverse proxy and identity provider as a separate security boundary; do not accept a requested profile from an untrusted MCP payload.
+
 ## Reverse proxy
 
 Preserve HTTP streaming required by MCP, enforce request limits/timeouts and terminate TLS. Authentication must map to an allowed profile outside untrusted payloads.

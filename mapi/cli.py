@@ -95,6 +95,13 @@ def seed_demo() -> None:
     print(json.dumps(seed_demo_database(_database_path()), indent=2))
 
 
+def demo() -> None:
+    from mapi.demo import run_isolated_demo
+
+    result = run_isolated_demo()
+    print(result["human_output"])
+
+
 def server() -> None:
     os.environ.setdefault("MCP_SURFACE_PROFILE", "agent")
     os.environ.setdefault("MAPI_RUNTIME_HOST", "127.0.0.1")

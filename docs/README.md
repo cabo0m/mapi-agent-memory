@@ -13,6 +13,10 @@
 - `OPERATIONS.md` — backups, maintenance and recovery principles
 - `PUBLIC_EXPORT_MANIFEST.md` — reviewed export boundary
 - `PUBLIC_RELEASE_AUDIT.md` — release evidence and blockers
+- `PUBLIC_RELEASE_PLAN.md` — RC2 preparation baseline, scope and gates
+- `PUBLIC_DIRECTORY_SUBMISSIONS.md` — neutral listing and announcement copy
+- `COMPARISON.md` — fair comparison with static instructions and other memory approaches
+- `RELEASE_NOTES_0.1.0_RC2.md` — draft notes for the proposed future release
 - `SECURITY_MODEL.md` — threats, trust boundaries and mitigations
 - `TROUBLESHOOTING.md` — common failures and diagnostics
 - `DEPENDENCIES.md` — direct dependency inventory

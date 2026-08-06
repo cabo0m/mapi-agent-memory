@@ -22,3 +22,7 @@ The authoritative neutral template is [`.env.example`](../.env.example). The cor
 | `MAPI_REQUEST_TIMEOUT_SECONDS` | `30` | no | Limits optional outbound provider waits |
 
 Environment variables are process configuration, not authorization. A payload field can never grant a higher profile.
+
+## Remote authentication status
+
+The runtime contains remote-auth integration points, but remote authentication is not part of the local quickstart and is classified as experimental in this public candidate. A supported remote deployment still requires a complete external identity and TLS boundary, tested token handling, restricted profile mapping and an unreachable admin surface. No private owner values, redirect URIs, endpoints or provider configuration are required or included.

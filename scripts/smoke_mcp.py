@@ -24,7 +24,15 @@ async def smoke(url: str, project_key: str) -> dict[str, Any]:
     async with Client(url) as client:
         tools = await client.list_tools()
         names = [tool.name for tool in tools]
-        required = {"bootstrap_agent_context", "save_memory", "find_memories", "get_memory", "get_memory_links"}
+        required = {
+            "bootstrap_agent_context",
+            "open_workshop",
+            "run_workshop_action",
+            "save_memory",
+            "find_memories",
+            "get_memory",
+            "get_memory_links",
+        }
         missing = sorted(required - set(names))
         if missing:
             raise RuntimeError(f"Required tools are missing: {missing}")
@@ -70,8 +78,27 @@ async def smoke(url: str, project_key: str) -> dict[str, Any]:
             raise RuntimeError("Links payload is missing")
 
         timeline = _data(await client.call_tool("open_workshop", {"area": "timeline"}))
+        timeline_result = _data(
+            await client.call_tool(
+                "run_workshop_action",
+                {
+                    "area": "timeline",
+                    "action": "search_verbatim",
+                    "payload": {
+                        "query": "public MCP smoke",
+                        "scope": "memories",
+                        "project_key": project_key,
+                        "limit": 5,
+                    },
+                },
+            )
+        )
         denied = _data(await client.call_tool("open_workshop", {"area": "admin"}))
-        if timeline.get("status") != "ok" or denied.get("status") != "denied":
+        if (
+            timeline.get("status") != "ok"
+            or timeline_result.get("status") != "ok"
+            or denied.get("status") != "denied"
+        ):
             raise RuntimeError("Surface permission smoke failed")
 
         return {
@@ -79,6 +106,7 @@ async def smoke(url: str, project_key: str) -> dict[str, Any]:
             "tool_count": len(names),
             "memory_id": memory_id,
             "timeline_actions": len(timeline.get("actions", [])),
+            "timeline_search_status": timeline_result["status"],
             "admin_status": denied["status"],
         }
 

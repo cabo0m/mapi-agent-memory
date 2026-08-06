@@ -42,6 +42,7 @@ mapi-server = "mapi.cli:server"
 mapi-migrate = "mapi.cli:migrate"
 mapi-doctor = "mapi.cli:doctor"
 mapi-seed-demo = "mapi.cli:seed_demo"
+mapi-demo = "mapi.cli:demo"
 mapi-capabilities = "mapi.capabilities:main"
 
 [tool.setuptools]
