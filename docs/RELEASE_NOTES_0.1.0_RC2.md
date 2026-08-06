@@ -1,6 +1,6 @@
-# MAPI v0.1.0-rc2 draft release notes
+# MAPI v0.1.0-rc2
 
-Status: draft only. No tag or GitHub Release has been created.
+This is a **Public Release Candidate / Developer Preview**, not a production release.
 
 ## Highlights
 
@@ -28,7 +28,19 @@ Status: draft only. No tag or GitHub Release has been created.
 4. Start `mapi-server`, then run `python scripts/smoke_mcp.py`.
 5. Run `mapi-demo` to verify current-state and preserved-history behavior independently of existing data.
 
-No version field is changed by this preparation commit. `v0.1.0-rc2` is the proposed future tag after publication approval.
+## Fresh installation from the release tag
+
+```bash
+git clone --branch v0.1.0-rc2 --depth 1 https://github.com/cabo0m/mapi-agent-memory.git
+cd mapi-agent-memory
+python -m venv .venv
+```
+
+Continue with the platform-specific activation and quickstart in the
+[README](https://github.com/cabo0m/mapi-agent-memory#install-and-run).
+
+Independent installation feedback is collected in
+[External installation test: MAPI v0.1.0-rc2](https://github.com/cabo0m/mapi-agent-memory/issues/1).
 
 ## Known limitations
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0rc2 — 2026-08-06
+
+- repositioned MAPI as persistent, auditable project memory for MCP clients;
+- added a complete local quickstart and named Codex and ChatGPT guidance;
+- added an isolated, model-free current-state and preserved-history demo;
+- expanded standard and lifecycle smoke verification;
+- added neutral release, directory, comparison and issue-reporting materials;
+- retained the safe local-first defaults and existing lifecycle contracts.
+
 ## 0.1.0rc1 — 2026-07-30
 
 - created a standalone sanitized public release candidate;
