@@ -59,6 +59,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -71,7 +73,7 @@ jobs:
       - run: git diff --exit-code -- docs/CAPABILITIES.md
       - name: Audit pull-request contents
         if: github.event_name == 'pull_request'
-        run: python scripts/audit_public_repository.py --skip-git-metadata
+        run: python scripts/audit_public_repository.py --pull-request
       - name: Audit published Git metadata and contents
         if: github.event_name != 'pull_request'
         run: python scripts/audit_public_repository.py

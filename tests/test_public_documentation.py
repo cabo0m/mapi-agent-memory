@@ -299,17 +299,30 @@ def test_git_policy_rejects_private_origin_values(
     }
 
 
-def test_audit_can_skip_synthetic_pull_request_git_metadata(monkeypatch) -> None:
-    def fail_if_called(failures: list[dict[str, str]]) -> dict[str, object]:
-        pytest.fail("Git metadata scan must not run for a synthetic pull-request merge commit")
+def test_pull_request_audit_still_scans_reachable_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    private_email = bytes.fromhex(public_audit.FORBIDDEN_PRIVATE_EMAIL_HEX).decode("ascii")
+    repository.joinpath("temporary.txt").write_text(private_email, encoding="utf-8")
+    _git(repository, "add", "temporary.txt")
+    _git(repository, "commit", "-m", "Add temporary historical value")
+    _git(repository, "rm", "temporary.txt")
+    _git(repository, "commit", "-m", "Remove temporary historical value")
+    synthetic_commit = _git(repository, "rev-parse", "HEAD")
 
-    monkeypatch.setattr(public_audit, "_scan_git_metadata", fail_if_called)
+    monkeypatch.setattr(public_audit, "ROOT", repository)
+    failures: list[dict[str, str]] = []
+    result = public_audit._scan_git_metadata(
+        failures,
+        synthetic_commit=synthetic_commit,
+    )
 
-    result = public_audit.audit_repository(check_git_metadata=False)
-
-    assert result["status"] == "ok"
-    assert result["repository_state"] == "not_checked"
-    assert result["git"]["check_status"] == "skipped"
+    assert result["reachable_blobs"] >= 2
+    assert "private_value_in_reachable_blob" in {
+        failure["rule"] for failure in failures
+    }
 
 
 def test_clean_release_git_metadata_passes_public_policy() -> None:
