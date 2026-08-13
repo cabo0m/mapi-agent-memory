@@ -5,9 +5,6 @@ import asyncio
 import json
 from typing import Any
 
-from fastmcp import Client
-
-
 def _data(result: Any) -> dict[str, Any]:
     value = getattr(result, "data", None)
     if isinstance(value, dict):
@@ -21,6 +18,8 @@ def _data(result: Any) -> dict[str, Any]:
 
 
 async def smoke(url: str, project_key: str) -> dict[str, Any]:
+    from fastmcp import Client
+
     async with Client(url) as client:
         tools = await client.list_tools()
         names = [tool.name for tool in tools]
@@ -116,7 +115,16 @@ def main() -> None:
     parser.add_argument("--url", default="http://127.0.0.1:8015/mcp/")
     parser.add_argument("--project-key", default="demo-project")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(smoke(args.url, args.project_key)), indent=2))
+    try:
+        result = asyncio.run(smoke(args.url, args.project_key))
+    except RuntimeError as exc:
+        if "failed to connect" not in str(exc).lower():
+            raise
+        raise SystemExit(
+            f"Could not connect to MAPI at {args.url}.\n"
+            "Start the server in another terminal with `mapi-server`, then rerun this command."
+        ) from None
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

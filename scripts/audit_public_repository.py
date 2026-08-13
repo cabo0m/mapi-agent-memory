@@ -419,7 +419,7 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
     return result
 
 
-def audit_repository() -> dict[str, Any]:
+def audit_repository(*, check_git_metadata: bool = True) -> dict[str, Any]:
     failures: list[dict[str, str]] = []
     if not MANIFEST_PATH.exists():
         return {
@@ -482,7 +482,22 @@ def audit_repository() -> dict[str, Any]:
 
     language_checked = _scan_language_policy(failures, allowlist, actual_paths)
     license_result = _scan_license_policy(failures, actual_paths)
-    git_result = _scan_git_metadata(failures)
+    git_result = (
+        _scan_git_metadata(failures)
+        if check_git_metadata
+        else {
+            "available": (ROOT / ".git").exists(),
+            "commit_count": None,
+            "branches": [],
+            "tags": [],
+            "remotes": [],
+            "notes": [],
+            "reachable_blobs": 0,
+            "repository_state": "not_checked",
+            "canonical_origin": None,
+            "check_status": "skipped",
+        }
+    )
 
     return {
         "status": "ok" if not failures else "failed",
@@ -528,12 +543,17 @@ def main() -> None:
         action="store_true",
         help="regenerate the canonical tracked-file inventory before auditing",
     )
+    parser.add_argument(
+        "--skip-git-metadata",
+        action="store_true",
+        help="skip branch and commit metadata checks for synthetic pull-request merge commits",
+    )
     args = parser.parse_args()
     if args.write_manifest:
         print(json.dumps(regenerate_manifest(), indent=2))
         return
 
-    result = audit_repository()
+    result = audit_repository(check_git_metadata=not args.skip_git_metadata)
     print(json.dumps(result, indent=2))
     if result["status"] != "ok":
         raise SystemExit(1)
