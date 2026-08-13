@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tomllib
@@ -298,7 +299,22 @@ def test_git_policy_rejects_private_origin_values(
     }
 
 
+def test_audit_can_skip_synthetic_pull_request_git_metadata(monkeypatch) -> None:
+    def fail_if_called(failures: list[dict[str, str]]) -> dict[str, object]:
+        pytest.fail("Git metadata scan must not run for a synthetic pull-request merge commit")
+
+    monkeypatch.setattr(public_audit, "_scan_git_metadata", fail_if_called)
+
+    result = public_audit.audit_repository(check_git_metadata=False)
+
+    assert result["status"] == "ok"
+    assert result["repository_state"] == "not_checked"
+    assert result["git"]["check_status"] == "skipped"
+
+
 def test_clean_release_git_metadata_passes_public_policy() -> None:
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        pytest.skip("GitHub tests pull requests through a synthetic merge commit")
     status = subprocess.run(
         ["git", "-C", str(ROOT), "status", "--porcelain=v1"],
         check=True,
