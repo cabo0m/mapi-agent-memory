@@ -21,9 +21,15 @@ if str(ROOT) not in sys.path:
 AUDIT_SCHEMA = "mapi_public_audit.v3"
 ALLOWED_AUTHOR_NAME = "Michał Chlewicki"
 ALLOWED_PUBLIC_EMAIL = "info@morenatech.work"
+ALLOWED_GIT_IDENTITIES = {
+    (ALLOWED_AUTHOR_NAME, ALLOWED_PUBLIC_EMAIL),
+    ("Cabo0m", "58841864+cabo0m@users.noreply.github.com"),
+    ("GitHub", "noreply@github.com"),
+}
 EXPECTED_APACHE_LICENSE_SHA256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
 CANONICAL_HTTPS_ORIGIN = "https://github.com/cabo0m/mapi-agent-memory.git"
 CANONICAL_SSH_ORIGIN = "git@github.com:cabo0m/mapi-agent-memory.git"
+RELEASE_TAG = re.compile(r"^v(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$")
 
 FORBIDDEN_SUFFIXES = {
     ".7z",
@@ -318,7 +324,11 @@ def _scan_license_policy(failures: list[dict[str, str]], paths: list[Path]) -> d
     return result
 
 
-def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
+def _scan_git_metadata(
+    failures: list[dict[str, str]],
+    *,
+    synthetic_commit: str | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "available": (ROOT / ".git").exists(),
         "commit_count": None,
@@ -346,13 +356,14 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
         if line
     ]
     result["branches"] = branches
-    if branches != ["main"]:
+    if synthetic_commit is None and branches != ["main"]:
         _failure(failures, ".git", "unexpected_branch", ",".join(branches))
 
     tags = [line for line in _git("tag", "--list").stdout.splitlines() if line]
     result["tags"] = tags
-    if tags:
-        _failure(failures, ".git", "tags_not_allowed", ",".join(tags))
+    invalid_tags = [tag for tag in tags if RELEASE_TAG.fullmatch(tag) is None]
+    if invalid_tags:
+        _failure(failures, ".git", "invalid_release_tag", ",".join(invalid_tags))
 
     notes = [
         line
@@ -379,9 +390,11 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
             _failure(failures, commit, "git_commit_metadata_unreadable")
             continue
         _, author_name, author_email, committer_name, committer_email, message = parts
-        if author_name != ALLOWED_AUTHOR_NAME or author_email != ALLOWED_PUBLIC_EMAIL:
+        author_identity = (author_name, author_email)
+        committer_identity = (committer_name, committer_email)
+        if commit != synthetic_commit and author_identity not in ALLOWED_GIT_IDENTITIES:
             _failure(failures, commit, "git_author_metadata_mismatch")
-        if committer_name != ALLOWED_AUTHOR_NAME or committer_email != ALLOWED_PUBLIC_EMAIL:
+        if commit != synthetic_commit and committer_identity not in ALLOWED_GIT_IDENTITIES:
             _failure(failures, commit, "git_committer_metadata_mismatch")
         metadata_text = "\n".join(parts[1:]).casefold()
         if private_email.casefold() in metadata_text:
@@ -419,7 +432,7 @@ def _scan_git_metadata(failures: list[dict[str, str]]) -> dict[str, Any]:
     return result
 
 
-def audit_repository(*, check_git_metadata: bool = True) -> dict[str, Any]:
+def audit_repository(*, synthetic_commit: str | None = None) -> dict[str, Any]:
     failures: list[dict[str, str]] = []
     if not MANIFEST_PATH.exists():
         return {
@@ -482,22 +495,7 @@ def audit_repository(*, check_git_metadata: bool = True) -> dict[str, Any]:
 
     language_checked = _scan_language_policy(failures, allowlist, actual_paths)
     license_result = _scan_license_policy(failures, actual_paths)
-    git_result = (
-        _scan_git_metadata(failures)
-        if check_git_metadata
-        else {
-            "available": (ROOT / ".git").exists(),
-            "commit_count": None,
-            "branches": [],
-            "tags": [],
-            "remotes": [],
-            "notes": [],
-            "reachable_blobs": 0,
-            "repository_state": "not_checked",
-            "canonical_origin": None,
-            "check_status": "skipped",
-        }
-    )
+    git_result = _scan_git_metadata(failures, synthetic_commit=synthetic_commit)
 
     return {
         "status": "ok" if not failures else "failed",
@@ -544,16 +542,19 @@ def main() -> None:
         help="regenerate the canonical tracked-file inventory before auditing",
     )
     parser.add_argument(
-        "--skip-git-metadata",
+        "--pull-request",
         action="store_true",
-        help="skip branch and commit metadata checks for synthetic pull-request merge commits",
+        help="allow the synthetic pull-request commit while still scanning all reachable history",
     )
     args = parser.parse_args()
     if args.write_manifest:
         print(json.dumps(regenerate_manifest(), indent=2))
         return
 
-    result = audit_repository(check_git_metadata=not args.skip_git_metadata)
+    synthetic_commit = None
+    if args.pull_request:
+        synthetic_commit = _git("rev-parse", "HEAD").stdout.strip()
+    result = audit_repository(synthetic_commit=synthetic_commit)
     print(json.dumps(result, indent=2))
     if result["status"] != "ok":
         raise SystemExit(1)

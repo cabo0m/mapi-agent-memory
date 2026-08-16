@@ -5,6 +5,11 @@ import asyncio
 import json
 from typing import Any
 
+
+class MAPIConnectionError(RuntimeError):
+    """Raised only when the MCP client cannot establish its initial connection."""
+
+
 def _data(result: Any) -> dict[str, Any]:
     value = getattr(result, "data", None)
     if isinstance(value, dict):
@@ -18,9 +23,16 @@ def _data(result: Any) -> dict[str, Any]:
 
 
 async def smoke(url: str, project_key: str) -> dict[str, Any]:
+    from contextlib import AsyncExitStack
+
     from fastmcp import Client
 
-    async with Client(url) as client:
+    async with AsyncExitStack() as stack:
+        try:
+            client = await stack.enter_async_context(Client(url))
+        except RuntimeError as exc:
+            raise MAPIConnectionError(str(exc)) from exc
+
         tools = await client.list_tools()
         names = [tool.name for tool in tools]
         required = {
@@ -117,9 +129,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         result = asyncio.run(smoke(args.url, args.project_key))
-    except RuntimeError as exc:
-        if "failed to connect" not in str(exc).lower():
-            raise
+    except MAPIConnectionError:
         raise SystemExit(
             f"Could not connect to MAPI at {args.url}.\n"
             "Start the server in another terminal with `mapi-server`, then rerun this command."
