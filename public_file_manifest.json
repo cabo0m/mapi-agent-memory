@@ -334,6 +334,7 @@
     "tests/test_sandman_v3_validator.py",
     "tests/test_schemas.py",
     "tests/test_semantic_search.py",
+    "tests/test_smoke_mcp_cli.py",
     "tests/test_time_layer.py",
     "tests/test_timeline_helpers.py",
     "tests/test_timeline_module_runtime.py",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tomllib
@@ -299,7 +300,35 @@ def test_git_policy_rejects_private_origin_values(
     }
 
 
+def test_pull_request_audit_still_scans_reachable_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _temporary_public_repository(tmp_path)
+    private_email = bytes.fromhex(public_audit.FORBIDDEN_PRIVATE_EMAIL_HEX).decode("ascii")
+    repository.joinpath("temporary.txt").write_text(private_email, encoding="utf-8")
+    _git(repository, "add", "temporary.txt")
+    _git(repository, "commit", "-m", "Add temporary historical value")
+    _git(repository, "rm", "temporary.txt")
+    _git(repository, "commit", "-m", "Remove temporary historical value")
+    synthetic_commit = _git(repository, "rev-parse", "HEAD")
+
+    monkeypatch.setattr(public_audit, "ROOT", repository)
+    failures: list[dict[str, str]] = []
+    result = public_audit._scan_git_metadata(
+        failures,
+        synthetic_commit=synthetic_commit,
+    )
+
+    assert result["reachable_blobs"] >= 2
+    assert "private_value_in_reachable_blob" in {
+        failure["rule"] for failure in failures
+    }
+
+
 def test_clean_release_git_metadata_passes_public_policy() -> None:
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        pytest.skip("GitHub tests pull requests through a synthetic merge commit")
     status = subprocess.run(
         ["git", "-C", str(ROOT), "status", "--porcelain=v1"],
         check=True,
