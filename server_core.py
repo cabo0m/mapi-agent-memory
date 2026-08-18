@@ -220,6 +220,12 @@ from app.memory.linking import (
     run_memory_linking_pass_payload,
 )
 from app.memory.observability import queue_observability_metrics_payload
+from app.memory.agent_self_model import (
+    build_agent_autobiographical_timeline_payload,
+    build_agent_commitment_ledger_payload,
+    build_agent_self_capsule_payload,
+    build_agent_self_snapshot_payload,
+)
 from app.memory.pagination import (
     COMPACT_FIELDS,
     DEFAULT_FIELDS,
@@ -17189,6 +17195,87 @@ def get_mapi_capabilities(include_debug: bool = False) -> dict[str, Any]:
             "reason_codes": list(readiness.get("reason_codes") or []),
         }
     return payload
+
+
+
+@mcp.tool
+def get_agent_self_snapshot(
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    limit: int = 300,
+    include_content: bool = False,
+) -> dict[str, Any]:
+    """Build a read-only evidence-first self snapshot for a configured agent subject."""
+    conn = get_db_connection()
+    try:
+        return build_agent_self_snapshot_payload(
+            conn, subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), limit=int(limit), include_content=bool(include_content), row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_agent_commitment_ledger(
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    limit: int = 300,
+    include_content: bool = False,
+) -> dict[str, Any]:
+    """Return explicit commitments and guardrails bound to the configured agent subject."""
+    conn = get_db_connection()
+    try:
+        return build_agent_commitment_ledger_payload(
+            conn, subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), limit=int(limit), include_content=bool(include_content), row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_agent_autobiographical_timeline(
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    limit: int = 50,
+    include_content: bool = False,
+) -> dict[str, Any]:
+    """Return a bounded chronological timeline derived only from explicit self evidence."""
+    conn = get_db_connection()
+    try:
+        return build_agent_autobiographical_timeline_payload(
+            conn, subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), limit=int(limit), include_content=bool(include_content), row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_agent_self_capsule(
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    limit: int = 50,
+    include_content: bool = False,
+) -> dict[str, Any]:
+    """Return a compact source-linked self capsule suitable for bootstrap/context composition."""
+    conn = get_db_connection()
+    try:
+        return build_agent_self_capsule_payload(
+            conn, subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), limit=int(limit), include_content=bool(include_content), row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
 
 
 @mcp.tool
