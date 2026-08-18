@@ -41,6 +41,8 @@ from app import (
     gemma_worker_jobs,
     gemma_worker_runner,
 )
+from app.workshops.payload_contracts import MEMORY_FIND_SORT_VALUES, PROJECT_KEY_MODE_VALUES, invalid_choice_payload
+from app.workshops.capabilities import build_mapi_capabilities_payload
 from app.actor_context import (
     ActorContext,
     build_memory_visibility_filter,
@@ -50,6 +52,7 @@ from app.actor_context import (
 )
 from app.workshops.idempotency import idempotent_direct_mutation
 from app.workshops.runner import run_workshop_action_payload
+from app.runtime.freshness import get_runtime_readiness
 from app.runtime.backpressure import transport_status_payload
 from app.runtime.private_mode import effective_multiuser_flag_enabled, private_owner_key, runtime_mode
 from app.runtime.context import (
@@ -217,6 +220,14 @@ from app.memory.linking import (
     run_memory_linking_pass_payload,
 )
 from app.memory.observability import queue_observability_metrics_payload
+from app.memory.pagination import (
+    COMPACT_FIELDS,
+    DEFAULT_FIELDS,
+    MEMORY_LIST_ORDER,
+    PROJECTION_FIELDS,
+    list_memory_page,
+    normalize_projection,
+)
 from app.memory.ownership import bulk_set_memory_owner_payload, set_memory_owner_payload
 from app.memory.provenance_backfill import apply_provenance_backfill, build_provenance_backfill_preview
 from app.memory.provenance_context import resolve_write_provenance
@@ -240,6 +251,9 @@ from app.memory.evidence_relations import (
     preview_evidence_relation_rollback_payload,
     rollback_evidence_relation_payload,
 )
+from app.memory.canonical_truth_review import build_canonical_truth_review_payload
+from app.memory.legacy_graph_audit import build_legacy_graph_audit_payload
+from app.operations_observability import operations_observability_payload
 from app.memory.reconciliation import (
     preview_memory_capture_reconciliation_payload,
 )
@@ -17165,6 +17179,76 @@ def preview_research_ingest_review(project_key: str | None = None, limit: int = 
 # ---------------------------------------------------------------------------
 
 
+def get_mapi_capabilities(include_debug: bool = False) -> dict[str, Any]:
+    """Return the explicit client-visible MCP/workshop capability contract."""
+    readiness = get_runtime_readiness(include_debug=bool(include_debug))
+    payload = build_mapi_capabilities_payload(runtime_readiness=readiness)
+    if include_debug:
+        payload["debug"] = {
+            "readiness_status": readiness.get("status"),
+            "reason_codes": list(readiness.get("reason_codes") or []),
+        }
+    return payload
+
+
+@mcp.tool
+
+def list_memories_page(
+    page_size: int = 20,
+    cursor: str | None = None,
+    project_key: str | None = None,
+    project_key_mode: str = "exact",
+    scope_code: str | None = None,
+    memory_type: str | None = None,
+    state_code: str | None = None,
+    truth_kind: str | None = None,
+    tag: str | None = None,
+    include_archived: bool = False,
+    compact: bool = False,
+    fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """Stable keyset-paginated memory inventory with bounded field projection."""
+    if int(page_size) < 1 or int(page_size) > 100:
+        return {"status": "error", "error": "page_size_out_of_range", "allowed_range": [1, 100], "actual": page_size}
+    normalized_mode = str(project_key_mode or "exact").strip().casefold()
+    if normalized_mode not in PROJECT_KEY_MODE_VALUES:
+        return invalid_choice_payload(field="project_key_mode", actual=project_key_mode, allowed_values=PROJECT_KEY_MODE_VALUES)
+    if fields is not None and not isinstance(fields, list):
+        return {"status": "error", "error": "fields_must_be_array"}
+    try:
+        selected_fields = normalize_projection(fields=fields, compact=bool(compact))
+    except ValueError as exc:
+        error = str(exc)
+        payload = {"status": "error", "error": error.split(":", 1)[0], "allowed_fields": list(PROJECTION_FIELDS)}
+        if ":" in error:
+            payload["field"] = error.split(":", 1)[1]
+        return payload
+    requested_project_key = normalize_optional_text(project_key)
+    conn = get_db_connection()
+    try:
+        project_key_values, resolved_mode, canonical_project_key = _resolve_project_key_filter(
+            conn, project_key=requested_project_key, project_key_mode=normalized_mode
+        )
+        filters = {
+            "requested_project_key": requested_project_key,
+            "canonical_project_key": canonical_project_key,
+            "project_key_mode": resolved_mode,
+            "project_key_values": list(project_key_values or []),
+            "scope_code": normalize_scope_code(scope_code),
+            "memory_type": normalize_optional_text(memory_type),
+            "state_code": normalize_state_code(state_code),
+            "truth_kind": normalize_truth_kind(truth_kind),
+            "tag": normalize_optional_text(tag),
+            "include_archived": bool(include_archived),
+        }
+        result = list_memory_page(conn, filters=filters, fields=selected_fields, compact=bool(compact), page_size=int(page_size), cursor=normalize_optional_text(cursor))
+    finally:
+        conn.close()
+    result["requested_project_key"] = requested_project_key
+    result["canonical_project_key"] = canonical_project_key
+    return result
+
+
 @mcp.tool
 def hybrid_search_memories(
     query: str,
@@ -17714,6 +17798,82 @@ def rollback_memory_relation(
         )
     finally:
         conn.close()
+
+
+@mcp.tool
+def get_canonical_truth_review(
+    project_key: str | None = None,
+    include_items: bool = True,
+    sample_limit: int = 200,
+) -> dict[str, Any]:
+    """Read-only evidence and consumer-impact review for active legacy truth relations."""
+    conn = get_db_connection()
+    try:
+        return build_canonical_truth_review_payload(
+            conn,
+            project_key=project_key,
+            include_items=bool(include_items),
+            sample_limit=int(sample_limit),
+            row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_legacy_graph_audit(
+    project_key: str | None = None,
+    include_trusted: bool = False,
+    include_candidates: bool = True,
+    sample_limit: int = 100,
+) -> dict[str, Any]:
+    """Read-only audit of active graph debt without rewriting historical edges."""
+    conn = get_db_connection()
+    try:
+        return build_legacy_graph_audit_payload(
+            conn,
+            project_key=project_key,
+            include_trusted=bool(include_trusted),
+            include_candidates=bool(include_candidates),
+            sample_limit=int(sample_limit),
+            row_to_dict=row_to_dict,
+            resolve_project_key=lambda db, key: resolve_canonical_project_key(
+                db, key, normalize_optional_text=normalize_optional_text
+            ),
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_mapi_operations_observability(
+    project_key: str | None = "mapi",
+    timeout_budget_ms: int = 1500,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Return one bounded read-only operations dashboard for the public MAPI runtime."""
+    normalized_project = normalize_optional_text(project_key) or "mapi"
+    try:
+        return operations_observability_payload(
+            project_key=normalized_project,
+            timeout_budget_ms=int(timeout_budget_ms),
+            include_debug=bool(include_debug),
+            get_runtime_readiness=get_runtime_readiness,
+            get_transport_status=get_mcp_transport_status,
+            get_embedding_stats=get_semantic_embedding_stats,
+            get_retrieval_qa=search_qa_report,
+            get_provider_observability=get_sandman_provider_observability,
+            get_legacy_graph_audit=get_legacy_graph_audit,
+        )
+    except ValueError as exc:
+        if str(exc) == "timeout_budget_ms_out_of_range":
+            return {
+                "status": "error",
+                "error": "timeout_budget_ms_out_of_range",
+                "allowed_range": [50, 60000],
+                "actual": timeout_budget_ms,
+            }
+        raise
 
 
 @mcp.tool

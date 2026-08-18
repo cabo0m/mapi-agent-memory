@@ -18,6 +18,7 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `steward_after_action` | Steward after action. | `preview_memory_steward_after_action` | `reader` | `R0` | read | no | no | no | no |
 | `steward_session_close` | Steward session close. | `preview_memory_steward_session_close` | `reader` | `R0` | read | no | no | no | no |
 | `steward_nightly` | Steward nightly. | `preview_memory_steward_nightly` | `reader` | `R0` | read | no | no | no | no |
+| `list_page` | List page. | `list_memories_page` | `reader` | `R0` | read | no | no | no | no |
 | `recent` | Recent. | `recent_memories` | `reader` | `R0` | read | no | no | no | no |
 | `restore_ritual` | Restore ritual. | `get_memory_restore_ritual` | `reader` | `R0` | read | no | no | no | no |
 | `compare_modes` | Compare modes. | `compare_memory_modes` | `reader` | `R0` | read | no | no | no | no |
@@ -164,6 +165,9 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | Action | Purpose | Tool | Access | Risk | Read/write | External model | Mutates data | Preview | Rollback |
 |---|---|---|---|---|---|---|---|---|---|
 | `quality_alerts` | Quality alerts. | `get_quality_alerts` | `reader` | `R0` | read | no | no | no | no |
+| `operations_dashboard` | Operations dashboard. | `get_mapi_operations_observability` | `reader` | `R0` | read | no | no | no | no |
+| `canonical_truth_review` | Canonical truth review. | `get_canonical_truth_review` | `reader` | `R0` | read | no | no | no | no |
+| `legacy_graph_audit` | Legacy graph audit. | `get_legacy_graph_audit` | `reader` | `R0` | read | no | no | no | no |
 | `queue_dashboard` | Queue dashboard. | `get_operational_queue_dashboard` | `reader` | `R0` | read | no | no | no | no |
 | `owner_workload` | Owner workload. | `get_effective_owner_workload` | `reader` | `R0` | read | no | no | no | no |
 | `scope_mismatches` | Scope mismatches. | `list_project_scope_mismatches` | `reader` | `R0` | read | no | no | no | no |

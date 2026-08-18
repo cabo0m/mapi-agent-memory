@@ -66,6 +66,20 @@ WORKSHOP = Workshop(
             payload_schema={'project_key': 'str', 'candidate_limit': 'int', 'proposal_budget': 'int', 'include_debug': 'bool'},
         ),
         WorkshopAction(
+            action='list_page',
+            tool_name='list_memories_page',
+            purpose='Stable keyset-paginated memory inventory with field projection and compact responses.',
+            min_profile='clean_operator',
+            risk='low',
+            risk_class='R0',
+            payload_schema={
+                'page_size': 'int', 'cursor': 'str|null', 'project_key': 'str|null', 'project_key_mode': 'str',
+                'scope_code': 'str|null', 'memory_type': 'str|null', 'state_code': 'str|null', 'truth_kind': 'str|null',
+                'tag': 'str|null', 'include_archived': 'bool', 'compact': 'bool', 'fields': 'array|null',
+            },
+            payload_constraints={'project_key_mode': {'enum': ['exact', 'aliases']}},
+        ),
+        WorkshopAction(
             action='recent',
             tool_name='recent_memories',
             purpose='Pobierz ostatnie memories chronologicznie.',

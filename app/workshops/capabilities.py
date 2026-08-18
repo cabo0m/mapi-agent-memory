@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from app.workshops.payload_contracts import (
+    MEMORY_FIND_SORT_VALUES,
+    PROJECT_KEY_MODE_VALUES,
+    WORKSHOP_PAYLOAD_SCHEMA_VERSION,
+)
+
+
+MAPI_MCP_CONTRACT_VERSION = "mapi_mcp_contract.v1"
+MAPI_CAPABILITIES_SCHEMA = "mapi_capabilities.v1"
+
+
+def build_mapi_capabilities_payload(*, runtime_readiness: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = dict(runtime_readiness.get("runtime") or {})
+    contract = dict(runtime_readiness.get("current_contract") or {})
+    return {
+        "status": "ok",
+        "schema": MAPI_CAPABILITIES_SCHEMA,
+        "contract_version": MAPI_MCP_CONTRACT_VERSION,
+        "workshop_payload_schema_version": WORKSHOP_PAYLOAD_SCHEMA_VERSION,
+        "profile": runtime.get("profile"),
+        "runtime_mode": runtime.get("runtime_mode") or contract.get("runtime_mode"),
+        "registry": {
+            "version": contract.get("registry_version") or runtime.get("registry_version"),
+            "fingerprint": contract.get("registry_fingerprint") or runtime.get("registry_fingerprint"),
+            "action_count": contract.get("registry_action_count"),
+        },
+        "features": {
+            "structured_payload_errors": True,
+            "structured_enum_errors": True,
+            "capabilities_endpoint": True,
+            "cursor_pagination": True,
+            "field_projection": True,
+            "compact_responses": True,
+            "idempotency_keys": True,
+            "partial_report_sections": True,
+            "report_timeout_budgets": True,
+            "session_100_call_gate": True,
+        },
+        "contracts": {
+            "memory.find.sort_by": {
+                "type": "str",
+                "allowed_values": list(MEMORY_FIND_SORT_VALUES),
+                "default": "active",
+            },
+            "memory.find.project_key_mode": {
+                "type": "str",
+                "allowed_values": list(PROJECT_KEY_MODE_VALUES),
+                "default": "exact",
+            },
+            "memory.list_page": {
+                "order": "created_at_desc_id_desc",
+                "cursor": "opaque_keyset_snapshot_v1",
+                "page_size_range": [1, 100],
+                "projection": "allowlisted_fields",
+                "compact": True,
+                "project_key_mode_allowed_values": list(PROJECT_KEY_MODE_VALUES),
+            },
+            "mutation.idempotency": {
+                "schema": "mapi_idempotency.v1",
+                "scope": "run_workshop_action mutations plus direct save/propose/recall",
+                "workshop_transport": ["top_level_idempotency_key", "payload.idempotency_key_meta"],
+                "completed_replay": True,
+                "payload_conflict": "idempotency_key_conflict",
+                "interrupted_request": "idempotency_in_doubt",
+                "read_only_key": "idempotency_not_applicable",
+            },
+            "governance.queue_dashboard": {
+                "report_schema": "mapi_bounded_report.v1",
+                "default_timeout_budget_ms": 1500,
+                "timeout_budget_range_ms": [50, 60000],
+                "section_statuses": ["ok", "timed_out", "error", "skipped_budget", "skipped_dependency"],
+                "partial_results": True,
+                "duplicate_scan_cooperative_timeout": True,
+            },
+            "operations.observability_dashboard": {
+                "schema": "mapi_operations_observability.v1",
+                "report_schema": "mapi_bounded_report.v1",
+                "default_timeout_budget_ms": 1500,
+                "timeout_budget_range_ms": [50, 60000],
+                "sections": ["runtime", "transport", "embeddings", "graph_debt", "provider", "retrieval_quality"],
+                "partial_results": True,
+                "read_only": True,
+                "model_calls_performed": False,
+                "cost_scope": "sandman_provider_observability_only",
+            },
+            "transport.backpressure": {
+                "stateful_session": True,
+                "max_in_flight_posts_default": 16,
+                "overload_status_code": 429,
+                "retry_after_header": "Retry-After",
+                "retry_after_seconds_default": 1,
+                "server_keepalive_seconds_default": 30,
+                "client_pooling": "client_managed",
+            },
+            "transport.session_reliability": {
+                "gate_schema": "mapi_100_call_session_gate.v1",
+                "single_client_context": True,
+                "requested_calls": 100,
+                "successful_calls": 100,
+                "passed": True,
+                "public_tunnel_gate_schema": "mapi_public_tunnel_100_request_gate.v1",
+                "public_tunnel_requested": 100,
+                "public_tunnel_responses": 100,
+                "public_tunnel_upstream_errors": 0,
+                "public_tunnel_passed": True,
+            },
+            "graph.canonical_truth_review": {
+                "schema": "mapi_canonical_truth_review.v1",
+                "relations": ["supports", "contradicts", "refines"],
+                "recommendations": ["archive_from_active_truth", "preserve_legacy_lineage", "requires_operator_review"],
+                "read_only": True,
+                "auto_archive_allowed": False,
+                "semantic_similarity_used": False,
+                "content_used_for_classification": False,
+                "consumer_impact_reported": True,
+            },
+            "graph.legacy_debt_audit": {
+                "schema": "mapi_legacy_graph_audit.v1",
+                "classifications": ["trusted", "legacy_unverified", "invalid", "redundant"],
+                "read_only": True,
+                "auto_apply_allowed": False,
+                "semantic_similarity_used_for_classification": False,
+                "operations_dashboard_warns_on": ["invalid", "redundant"],
+                "legacy_direct_refines_write_path_status": "retired_fail_closed",
+                "legacy_partial_supersession_default_allowed": False,
+                "legacy_conflicts_v1_status": "retired_fail_closed",
+                "conflict_explainer_canonical_truth_write_status": "guarded_route_required",
+                "archived_truth_edges_excluded_from_active_consumers": True,
+            },
+            "graph.linking_evidence_boundary": {
+                "preview_read_only": True,
+                "semantic_similarity_can_create_durable_link": False,
+                "heuristic_candidates_require_review": True,
+                "durable_evidence_kinds": ["supersedes_memory_id", "parent_memory_id"],
+                "parent_memory_id_relation": "context_for",
+            },
+            "graph.evidence_bound_relations": {
+                "schema": "memory_v3_evidence_relation_preview.v1",
+                "relations": ["supports", "derived_from"],
+                "preview_hash_required": True,
+                "explicit_confirmation_required": True,
+                "rollback_supported": True,
+                "semantic_similarity_can_create_relation": False,
+                "supports_evidence_kinds": ["same_source_event_ref", "explicit_support_attestation"],
+                "derived_from_evidence_kinds": ["explicit_source_memory_reference"],
+                "new_truth_queue_created": False,
+            },
+            "graph.canonical_relation_contracts": {
+                "schema": "mapi_memory_relation_contracts.v1",
+                "relations": ["supports", "contradicts", "supersedes", "refines", "derived_from", "about_project"],
+                "semantic_similarity_alone_allowed": False,
+                "about_project_storage": "memories.project_key",
+                "supports_status": "implemented_guarded",
+                "derived_from_status": "implemented_guarded",
+                "guarded_apply_relations": ["supports", "derived_from"],
+                "refines_storage_projection": {"relation_type": "supersedes", "relation_kind": "refinement"},
+            },
+            "graph.consolidation_canonical_path": {
+                "canonical_route": "memory/consolidation_queue -> consolidation_approve -> consolidation_apply_preview -> consolidation_apply",
+                "review_required": True,
+                "preview_hash_required": True,
+                "rollback_supported": True,
+                "legacy_v1_preview_read_only": True,
+                "legacy_v1_default_blocked": True,
+                "legacy_v1_unsafe_opt_in_only": True,
+                "legacy_v1_gravity_auto_support_enabled_by_default": False,
+                "historical_legacy_links_migrated": False,
+            },
+        },
+        "error_contract": {
+            "invalid_workshop_payload": {
+                "details_shape": {
+                    "field": "str",
+                    "code": "str",
+                    "allowed_values": "list|omitted",
+                    "actual": "any|omitted",
+                },
+                "enum_code": "invalid_enum_value",
+            },
+            "direct_invalid_enum": {
+                "error": "invalid_enum_value",
+                "fields": ["field", "actual", "allowed_values"],
+            },
+        },
+    }
