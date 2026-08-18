@@ -153,6 +153,15 @@ from app.memory.events import (
 )
 from app.memory.filters import memory_matches_operational_filters
 from app.memory.insights import layer_stats_payload, version_lineage_payload
+from app.memory.context_engine import build_agent_context_payload
+from app.memory.hybrid_retrieval import fuse_hybrid_results
+from app.memory.steward import (
+    after_action_content,
+    before_action_payload,
+    capture_phase_payload,
+    nightly_payload,
+    session_close_content,
+)
 from app.memory.current_state import (
     apply_direct_supersession_transition,
     get_memory_current_state_inventory_payload,
@@ -16912,6 +16921,384 @@ def preview_research_ingest_review(project_key: str | None = None, limit: int = 
         )
     finally:
         conn.close()
+
+# ---------------------------------------------------------------------------
+# Retrieval v2 / Context Engine / Memory Steward
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool
+def hybrid_search_memories(
+    query: str,
+    project_key: str | None = None,
+    limit: int = 10,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Fuse lexical and semantic retrieval with recency using a deterministic RRF ranker.
+
+    Gravity is intentionally not enabled until the public evidence-bound Gravity
+    contract is ported. The result reports that channel as disabled rather than
+    silently pretending parity.
+    """
+    normalized_query = normalize_required_text(query, "query")
+    safe_limit = max(1, min(int(limit), 50))
+    requested_project_key = normalize_optional_text(project_key)
+
+    conn = get_db_connection()
+    try:
+        _values, _mode, canonical_project_key = _resolve_project_key_filter(
+            conn,
+            project_key=requested_project_key,
+            project_key_mode="exact",
+        )
+    finally:
+        conn.close()
+
+    candidate_limit = min(100, max(20, safe_limit * 4))
+    lexical = find_memories(
+        text_query=normalized_query,
+        project_key=canonical_project_key,
+        project_key_mode="exact",
+        limit=candidate_limit,
+        include_history=False,
+        debug=True,
+    )
+    semantic = search_semantic(
+        normalized_query,
+        top_k=candidate_limit,
+        project_key=canonical_project_key,
+    )
+
+    candidate_ids = sorted(
+        {
+            *[
+                int(item["id"])
+                for item in lexical.get("items") or []
+                if item.get("id") is not None
+            ],
+            *[
+                int(item["memory_id"])
+                for item in semantic.get("results") or []
+                if item.get("memory_id") is not None
+            ],
+        }
+    )
+    conn = get_db_connection()
+    try:
+        candidate_items: dict[int, dict[str, Any]] = {}
+        if candidate_ids:
+            placeholders = ",".join("?" for _ in candidate_ids)
+            rows = conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                candidate_ids,
+            ).fetchall()
+            for row in rows:
+                item = enrich_memory_dict(row_to_dict(row))
+                memory_id = int(item.get("id") or 0)
+                item_project = normalize_optional_text(item.get("project_key"))
+                if memory_id <= 0:
+                    continue
+                if canonical_project_key is not None and item_project != canonical_project_key:
+                    continue
+                candidate_items[memory_id] = item
+    finally:
+        conn.close()
+
+    gravity_block = {
+        "status": "disabled",
+        "reason": "public_evidence_bound_gravity_not_enabled_yet",
+        "items": [],
+    }
+    result = fuse_hybrid_results(
+        query=normalized_query,
+        requested_project_key=requested_project_key,
+        canonical_project_key=canonical_project_key,
+        lexical_payload=lexical,
+        semantic_payload=semantic,
+        candidate_items=candidate_items,
+        gravity_block=gravity_block,
+        limit=safe_limit,
+    )
+    if include_debug:
+        result["debug"] = {
+            "candidate_limit": candidate_limit,
+            "lexical_strategy": list((lexical.get("debug") or {}).get("retrieval_strategy") or []),
+            "lexical_count": int(lexical.get("count") or 0),
+            "semantic_mode": semantic.get("retrieval_mode"),
+            "semantic_count": int(semantic.get("results_count") or 0),
+            "candidate_ids": candidate_ids,
+            "accepted_candidate_ids": sorted(candidate_items),
+        }
+    return result
+
+
+@mcp.tool
+def build_agent_context(
+    intent: str,
+    project_key: str = "demo-project",
+    token_budget: int = 2400,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Compose bounded, source-linked context from public MAPI read surfaces."""
+    restore = bootstrap_agent_context(project_key=project_key, limit=12)
+    current_project = restore.get("current_project") or {}
+    canonical_project_key = (
+        normalize_optional_text(current_project.get("project_key"))
+        or normalize_optional_text(project_key)
+        or "demo-project"
+    )
+    requested_project_key = (
+        normalize_optional_text(current_project.get("requested_project_key"))
+        or normalize_optional_text(project_key)
+        or canonical_project_key
+    )
+    retrieval = hybrid_search_memories(
+        query=intent,
+        project_key=canonical_project_key,
+        limit=8,
+        include_debug=True,
+    )
+    # The private runtime has a richer commitment ledger. Public MAPI keeps the
+    # context contract source-bound and reports the channel as unavailable until
+    # the neutral commitment contract is ported.
+    commitment_ledger = {
+        "status": "unavailable",
+        "commitments": [],
+        "source_memory_ids": [],
+    }
+    gravity_block = {
+        "status": "disabled",
+        "reason": "public_evidence_bound_gravity_not_enabled_yet",
+        "items": [],
+    }
+    result = build_agent_context_payload(
+        intent=intent,
+        requested_project_key=requested_project_key,
+        canonical_project_key=canonical_project_key,
+        token_budget=token_budget,
+        restore_payload=restore,
+        commitment_ledger=commitment_ledger,
+        retrieval_payload=retrieval,
+        gravity_block=gravity_block,
+    )
+    if include_debug and result.get("status") == "ok":
+        result["debug"] = {
+            "retrieval": retrieval.get("debug") or {},
+            "bootstrap_policy": restore.get("bootstrap_policy") or {},
+            "deferred_channels": ["commitment_ledger", "evidence_bound_gravity"],
+        }
+    return result
+
+
+def _parse_steward_source_ids(source_memory_ids_json: str | None) -> list[int]:
+    if not normalize_optional_text(source_memory_ids_json):
+        return []
+    try:
+        parsed = json.loads(str(source_memory_ids_json))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"source_memory_ids_json must be valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("source_memory_ids_json must be a JSON array")
+    source_ids: list[int] = []
+    seen: set[int] = set()
+    for value in parsed:
+        memory_id = int(value)
+        if memory_id <= 0 or memory_id in seen:
+            continue
+        seen.add(memory_id)
+        source_ids.append(memory_id)
+    return source_ids
+
+
+def _resolve_steward_project_key(project_key: str | None) -> tuple[str, str]:
+    requested = normalize_optional_text(project_key) or "demo-project"
+    conn = get_db_connection()
+    try:
+        _values, _mode, canonical = _resolve_project_key_filter(
+            conn,
+            project_key=requested,
+            project_key_mode="exact",
+        )
+    finally:
+        conn.close()
+    return requested, canonical or requested
+
+
+@mcp.tool
+def preview_memory_steward_before_action(
+    intent: str,
+    project_key: str = "demo-project",
+    token_budget: int = 2400,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Read-only before-action retrieval through the public Context Engine."""
+    context = build_agent_context(
+        intent=intent,
+        project_key=project_key,
+        token_budget=int(token_budget),
+        include_debug=bool(include_debug),
+    )
+    return before_action_payload(context=context)
+
+
+@mcp.tool
+def preview_memory_steward_after_action(
+    action_summary: str,
+    outcome_summary: str,
+    durable_delta: str,
+    project_key: str = "demo-project",
+    conversation_key: str | None = None,
+    source_context: str | None = None,
+    source_event_ref: str | None = None,
+    source_memory_ids_json: str | None = None,
+) -> dict[str, Any]:
+    """Build a source-evidenced after-action capture proposal without persistence."""
+    action = normalize_required_text(action_summary, "action_summary")
+    outcome = normalize_required_text(outcome_summary, "outcome_summary")
+    delta = normalize_required_text(durable_delta, "durable_delta")
+    source_ids = _parse_steward_source_ids(source_memory_ids_json)
+    if not source_ids and not normalize_optional_text(source_event_ref):
+        return {
+            "status": "blocked",
+            "schema": "memory_steward.v1",
+            "phase": "after_action",
+            "reason": "source_evidence_required",
+            "safety": {"read_only": True, "memory_mutations_performed": 0, "capture_items_created": 0},
+        }
+    requested_project_key, canonical_project_key = _resolve_steward_project_key(project_key)
+    content = after_action_content(
+        action_summary=action,
+        outcome_summary=outcome,
+        durable_delta=delta,
+        source_event_ref=source_event_ref,
+    )
+    capture = propose_memory_capture(
+        content=content,
+        project_key=canonical_project_key,
+        source_context=source_context or "memory_steward:after_action",
+        conversation_key=conversation_key,
+        hint="memory_steward_after_action",
+    )
+    return capture_phase_payload(
+        phase="after_action",
+        capture_proposal=capture,
+        requested_project_key=requested_project_key,
+        canonical_project_key=canonical_project_key,
+        content=content,
+        source_context=source_context or "memory_steward:after_action",
+        conversation_key=conversation_key,
+        source_event_ref=source_event_ref,
+        source_memory_ids=source_ids,
+        hint="memory_steward_after_action",
+    )
+
+
+@mcp.tool
+def preview_memory_steward_session_close(
+    completed_summary: str,
+    open_items_summary: str,
+    next_step: str,
+    project_key: str = "demo-project",
+    conversation_key: str | None = None,
+    source_context: str | None = None,
+    source_event_ref: str | None = None,
+    source_memory_ids_json: str | None = None,
+) -> dict[str, Any]:
+    """Build an explicit session-close checkpoint proposal without persistence."""
+    completed = normalize_required_text(completed_summary, "completed_summary")
+    open_items = normalize_required_text(open_items_summary, "open_items_summary")
+    next_value = normalize_required_text(next_step, "next_step")
+    source_ids = _parse_steward_source_ids(source_memory_ids_json)
+    if (
+        not source_ids
+        and not normalize_optional_text(source_event_ref)
+        and not normalize_optional_text(conversation_key)
+    ):
+        return {
+            "status": "blocked",
+            "schema": "memory_steward.v1",
+            "phase": "session_close",
+            "reason": "source_evidence_required",
+            "safety": {"read_only": True, "memory_mutations_performed": 0, "capture_items_created": 0},
+        }
+    requested_project_key, canonical_project_key = _resolve_steward_project_key(project_key)
+    content = session_close_content(
+        completed_summary=completed,
+        open_items_summary=open_items,
+        next_step=next_value,
+        source_event_ref=source_event_ref,
+    )
+    capture = propose_memory_capture(
+        content=content,
+        project_key=canonical_project_key,
+        source_context=source_context or "memory_steward:session_close",
+        conversation_key=conversation_key,
+        hint="memory_steward_session_close",
+    )
+    return capture_phase_payload(
+        phase="session_close",
+        capture_proposal=capture,
+        requested_project_key=requested_project_key,
+        canonical_project_key=canonical_project_key,
+        content=content,
+        source_context=source_context or "memory_steward:session_close",
+        conversation_key=conversation_key,
+        source_event_ref=source_event_ref,
+        source_memory_ids=source_ids,
+        hint="memory_steward_session_close",
+    )
+
+
+@mcp.tool
+def preview_memory_steward_nightly(
+    project_key: str = "demo-project",
+    candidate_limit: int = 8,
+    proposal_budget: int = 3,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Aggregate existing proposal/review surfaces into one read-only nightly plan."""
+    if candidate_limit < 1 or candidate_limit > 20:
+        return {"status": "error", "error": "candidate_limit must be in range 1..20"}
+    _requested_project_key, canonical_project_key = _resolve_steward_project_key(project_key)
+    sandman = preview_sandman_canonical(
+        project_key=canonical_project_key,
+        scope_code="project",
+        candidate_limit=int(candidate_limit),
+        proposal_budget=int(proposal_budget),
+        include_debug=bool(include_debug),
+    )
+    retention = preview_project_memory_retention(
+        project_key=canonical_project_key,
+        limit=int(candidate_limit),
+        include_retain=False,
+        include_debug=bool(include_debug),
+    )
+    revalidation = list_revalidation_queue(
+        limit=int(candidate_limit),
+        project_key=canonical_project_key,
+    )
+    capture_queue = list_memory_capture_review_items(
+        status="pending",
+        project_key=canonical_project_key,
+        limit=int(candidate_limit),
+        include_expired=False,
+    )
+    consolidation_queue = list_memory_consolidation_proposals(
+        status="pending",
+        project_key=canonical_project_key,
+        limit=int(candidate_limit),
+        include_rejected=False,
+    )
+    return nightly_payload(
+        project_key=canonical_project_key,
+        sandman=sandman,
+        retention=retention,
+        revalidation=revalidation,
+        capture_queue=capture_queue,
+        consolidation_queue=consolidation_queue,
+        candidate_limit=int(candidate_limit),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Vector / Semantic Search

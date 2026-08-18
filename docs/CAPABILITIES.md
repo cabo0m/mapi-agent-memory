@@ -12,6 +12,12 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | Action | Purpose | Tool | Access | Risk | Read/write | External model | Mutates data | Preview | Rollback |
 |---|---|---|---|---|---|---|---|---|---|
 | `find` | Find. | `find_memories` | `reader` | `R0` | read | no | no | no | no |
+| `hybrid_search` | Hybrid search. | `hybrid_search_memories` | `reader` | `R0` | read | no | no | no | no |
+| `context` | Context. | `build_agent_context` | `reader` | `R0` | read | no | no | no | no |
+| `steward_before_action` | Steward before action. | `preview_memory_steward_before_action` | `reader` | `R0` | read | no | no | no | no |
+| `steward_after_action` | Steward after action. | `preview_memory_steward_after_action` | `reader` | `R0` | read | no | no | no | no |
+| `steward_session_close` | Steward session close. | `preview_memory_steward_session_close` | `reader` | `R0` | read | no | no | no | no |
+| `steward_nightly` | Steward nightly. | `preview_memory_steward_nightly` | `reader` | `R0` | read | no | no | no | no |
 | `recent` | Recent. | `recent_memories` | `reader` | `R0` | read | no | no | no | no |
 | `restore_ritual` | Restore ritual. | `get_memory_restore_ritual` | `reader` | `R0` | read | no | no | no | no |
 | `compare_modes` | Compare modes. | `compare_memory_modes` | `reader` | `R0` | read | no | no | no | no |

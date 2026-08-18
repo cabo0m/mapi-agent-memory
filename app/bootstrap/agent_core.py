@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-"""Neutral bootstrap context for public MAPI clients."""
+"""Neutral, project-scoped bootstrap context for public MAPI clients."""
 
 from typing import Any, Callable
+
+from app.memory.project_keys import bootstrap_project_key_values
+from memory_bootstrap_policy import BootstrapPolicy, build_project_anchors_sql, build_recent_project_sql
 
 
 def agent_workshop_index() -> list[dict[str, Any]]:
@@ -33,15 +36,16 @@ def agent_recommended_next_calls() -> dict[str, str]:
         "find": "Search before creating a new memory.",
         "read": "Inspect the full memory before relying on it.",
         "links": "Inspect relationships and provenance.",
+        "context": "Compose source-bound project context before a complex action.",
         "write": "Use an explicit write or a proposal according to client policy.",
     }
 
 
 def agent_bootstrap_protocol() -> dict[str, str]:
     return {
-        "stage_1": "Select a project key.",
-        "stage_2": "Search recent and relevant memories.",
-        "stage_3": "Inspect source memories and links.",
+        "stage_1": "Select and canonicalize a project key.",
+        "stage_2": "Load bounded project anchors and recent project context.",
+        "stage_3": "Search relevant memories and inspect their provenance.",
         "stage_4": "Write only through an explicit or proposal path.",
     }
 
@@ -56,6 +60,22 @@ def project_purpose_for(project_key: str | None) -> str:
     return f"Durable agent memory and governance context for {key}."
 
 
+def _compact_bootstrap_row(row: Any, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+    item = row_to_dict(row)
+    return {
+        "id": item.get("id"),
+        "summary_short": item.get("summary_short"),
+        "memory_type": item.get("memory_type"),
+        "content": item.get("content"),
+        "tags": item.get("tags"),
+        "importance_score": item.get("importance_score"),
+        "confidence_score": item.get("confidence_score"),
+        "identity_weight": item.get("identity_weight"),
+        "project_key": item.get("project_key"),
+        "created_at": item.get("created_at"),
+    }
+
+
 def build_bootstrap_agent_context_payload(
     *,
     project_key: str | None,
@@ -65,35 +85,98 @@ def build_bootstrap_agent_context_payload(
     enrich_memory_dict: Callable[[dict[str, Any]], dict[str, Any]],
     normalize_optional_text: Callable[[Any], str | None],
 ) -> dict[str, Any]:
-    resolved_project = normalize_optional_text(project_key) or "demo-project"
-    safe_limit = max(1, min(int(limit), 50))
-    recent: list[dict[str, Any]] = []
-    connection = get_db_connection()
+    """Build a bounded, alias-aware and project-scoped bootstrap payload.
+
+    Public MAPI deliberately does not load global identity memories here. Core
+    bootstrap rows are restricted to the resolved project namespace so a shared
+    deployment cannot blend identity/context across projects.
+    """
+
+    requested_project = normalize_optional_text(project_key) or "demo-project"
+    safe_limit = max(1, min(int(limit or 24), 50))
+    conn = get_db_connection()
     try:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM memories
-            WHERE project_key = ?
-            ORDER BY id DESC
+        canonical_project, project_values = bootstrap_project_key_values(
+            conn,
+            requested_project,
+            normalize_optional_text=normalize_optional_text,
+        )
+        policy = BootstrapPolicy(
+            project_key=canonical_project,
+            project_key_values=project_values,
+            limit=safe_limit,
+        )
+
+        placeholders = ",".join("?" for _ in policy.project_key_values)
+        core_rows = conn.execute(
+            f"""
+            SELECT * FROM memories
+            WHERE activity_state = 'active'
+              AND project_key IN ({placeholders})
+            ORDER BY identity_weight DESC, importance_score DESC,
+                     confidence_score DESC, id DESC
             LIMIT ?
             """,
-            (resolved_project, safe_limit),
+            [*policy.project_key_values, policy.safe_limit],
         ).fetchall()
-        recent = [enrich_memory_dict(row_to_dict(row)) for row in rows]
+
+        project_sql, project_params = build_project_anchors_sql(policy)
+        recent_sql, recent_params = build_recent_project_sql(policy)
+        project_rows = conn.execute(project_sql, project_params).fetchall()
+        recent_rows = conn.execute(recent_sql, recent_params).fetchall()
     finally:
-        connection.close()
+        conn.close()
+
+    core_memories = [_compact_bootstrap_row(row, row_to_dict) for row in core_rows]
+    project_anchors = [_compact_bootstrap_row(row, row_to_dict) for row in project_rows]
+    recent_context = [_compact_bootstrap_row(row, row_to_dict) for row in recent_rows]
+    source_memory_ids = sorted(
+        {
+            int(item["id"])
+            for group in (core_memories, project_anchors, recent_context)
+            for item in group
+            if item.get("id") is not None
+        }
+    )
 
     return {
         "status": "ok",
-        "schema": "mapi_agent_bootstrap.v1",
+        "schema": "mapi_agent_bootstrap.v2",
+        "bootstrap_tool": "bootstrap_agent_context",
+        "bootstrap_policy": {
+            "name": "shared_memory_bootstrap_policy_v1",
+            "requested_project_key": requested_project,
+            "project_key": canonical_project,
+            "project_key_values": list(policy.project_key_values),
+            "limit": policy.safe_limit,
+            "recent_limit": policy.safe_recent_limit,
+            "project_anchor_tags": list(policy.project_anchor_tags),
+        },
         "project": {
-            "project_key": resolved_project,
-            "purpose": project_purpose_for(resolved_project),
-            "known_systems": known_systems_for_project(resolved_project),
+            "requested_project_key": requested_project,
+            "project_key": canonical_project,
+            "purpose": project_purpose_for(canonical_project),
+            "known_systems": known_systems_for_project(canonical_project),
+        },
+        "current_project": {
+            "requested_project_key": requested_project,
+            "project_key": canonical_project,
+            "active_project_key": canonical_project,
+            "known_systems": known_systems_for_project(canonical_project),
         },
         "protocol": agent_bootstrap_protocol(),
         "recommended_next_calls": agent_recommended_next_calls(),
         "workshop_index": agent_workshop_index(),
-        "recent_memories": recent,
+        "core_memories": core_memories,
+        "core_identity": core_memories,
+        "project_anchors": project_anchors,
+        "recent_context": recent_context,
+        "recent_project_context": recent_context,
+        "recent_memories": recent_context,
+        "source_memory_ids": source_memory_ids,
+        "safety": {
+            "project_scoped": True,
+            "global_identity_loaded": False,
+            "read_only": True,
+        },
     }
