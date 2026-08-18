@@ -48,6 +48,7 @@ from app.actor_context import (
     resolve_actor_context,
     resolve_system_actor,
 )
+from app.workshops.idempotency import idempotent_direct_mutation
 from app.workshops.runner import run_workshop_action_payload
 from app.runtime.backpressure import transport_status_payload
 from app.runtime.private_mode import effective_multiuser_flag_enabled, private_owner_key, runtime_mode
@@ -130,7 +131,7 @@ from app.ingest.items import (
     require_ingest_item,
     row_to_ingest_item,
 )
-from app.memory.activation import recall_memory_payload
+from app.memory.activation import get_memory_recall_telemetry_payload, recall_memory_payload
 from app.memory.conflicts import get_conflict_pairs_payload, list_conflicted_memories_payload
 from app.memory.capture_queue import (
     CAPTURE_REVIEW_ITEM_SCHEMA_VERSION,
@@ -150,6 +151,7 @@ from app.memory.events import (
     add_review_note_payload,
     add_validation_event_payload,
     insert_memory_event_payload,
+    memory_event_to_dict,
     list_review_events_payload,
     list_validation_events_payload,
 )
@@ -6980,13 +6982,21 @@ def git_push(remote: str = "origin", branch: str | None = None, workdir: str | N
 
 
 @mcp.tool
-def run_workshop_action(area: str, action: str, payload: dict[str, Any] | None = None, payload_json: str | None = None) -> dict[str, Any]:
+def run_workshop_action(
+    area: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    payload_json: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     """Run an action from a workshop through the compact MCP surface."""
     return run_workshop_action_payload(
         area=area,
         action=action,
         payload=payload,
         payload_json=payload_json,
+        idempotency_key=idempotency_key,
+        get_db_connection=get_db_connection,
         normalize_optional_text=normalize_optional_text,
     )
 
@@ -7976,6 +7986,7 @@ def _queue_public_memory_create(payload: dict[str, Any]) -> dict[str, Any] | Non
 
 
 @mcp.tool
+@idempotent_direct_mutation("direct:save_memory", get_db_connection_resolver=lambda: get_db_connection)
 def save_memory(
     content: str,
     memory_type: str = "project_note",
@@ -7995,6 +8006,7 @@ def save_memory(
     supersedes_memory_id: int | None = None,
     supersession_relation: str | None = None,
     supersession_scope: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Persist an explicit or deliberately autonomous private-MAPI memory."""
     if not profile_allows(current_surface_profile(), "agent"):
@@ -8127,6 +8139,7 @@ def save_memory(
 
 
 @mcp.tool
+@idempotent_direct_mutation("direct:propose_memory", get_db_connection_resolver=lambda: get_db_connection)
 def propose_memory(
     content: str,
     project_key: str | None = None,
@@ -8136,6 +8149,7 @@ def propose_memory(
     source_event_ref: str | None = None,
     hint: str | None = None,
     expires_at: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Queue an uncertain or agent-generated memory proposal for review."""
     if not profile_allows(current_surface_profile(), "agent"):
@@ -11457,7 +11471,15 @@ def link_memories(
 
 
 @mcp.tool
-def recall_memory(memory_id: int, strength: float = 0.1, recall_type: str = "manual") -> dict[str, Any]:
+@idempotent_direct_mutation("direct:recall_memory", get_db_connection_resolver=lambda: get_db_connection)
+def recall_memory(
+    memory_id: int,
+    strength: float = 0.1,
+    recall_type: str = "manual",
+    source: str | None = "mcp",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Record behavioral recall telemetry without changing durable importance."""
     conn = get_db_connection()
     try:
         return recall_memory_payload(
@@ -11465,11 +11487,37 @@ def recall_memory(memory_id: int, strength: float = 0.1, recall_type: str = "man
             memory_id=memory_id,
             strength=strength,
             recall_type=recall_type,
+            source=source,
             require_memory_row=require_memory_row,
             normalize_score=normalize_score,
+            normalize_optional_text=normalize_optional_text,
             utc_now_iso=utc_now_iso,
+            insert_memory_event=insert_memory_event,
             row_to_dict=row_to_dict,
             enrich_memory_dict=enrich_memory_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_memory_recall_telemetry(
+    memory_id: int,
+    limit: int = 50,
+    recall_type: str | None = None,
+) -> dict[str, Any]:
+    """Read append-only recall events and legacy unattributed recall count."""
+    conn = get_db_connection()
+    try:
+        return get_memory_recall_telemetry_payload(
+            conn,
+            memory_id=memory_id,
+            limit=limit,
+            recall_type=recall_type,
+            require_memory_row=require_memory_row,
+            normalize_optional_text=normalize_optional_text,
+            row_to_dict=row_to_dict,
+            memory_event_to_dict=memory_event_to_dict,
         )
     finally:
         conn.close()

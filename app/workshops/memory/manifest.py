@@ -868,7 +868,26 @@ WORKSHOP = Workshop(
             purpose='Lekki recall z pamiÄ™ci.',
             min_profile='clean_operator',
             risk='low',
-            payload_schema={'memory_id': 'int', 'strength': 'float'},
+            risk_class='R1',
+            payload_schema={
+                'memory_id': 'int',
+                'strength': 'float',
+                'recall_type': 'str',
+                'source': 'str|null',
+            },
+        ),
+        WorkshopAction(
+            action='recall_telemetry',
+            tool_name='get_memory_recall_telemetry',
+            purpose='Read append-only recall telemetry without changing durable importance.',
+            min_profile='clean_operator',
+            risk='low',
+            risk_class='R0',
+            payload_schema={
+                'memory_id': 'int',
+                'limit': 'int',
+                'recall_type': 'str|null',
+            },
         ),
         WorkshopAction(
             action='project_aliases',

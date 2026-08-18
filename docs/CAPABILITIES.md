@@ -96,6 +96,7 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `admin_write` | Admin write. | `admin_memory_write` | `admin` | `R3` | read | no | no | no | no |
 | `create_direct_confirmed` | Create direct confirmed. | `create_memory_direct_confirmed` | `admin` | `R3` | write | no | yes | no | no |
 | `recall` | Recall. | `recall_memory` | `agent` | `R1` | write | no | yes | no | no |
+| `recall_telemetry` | Recall telemetry. | `get_memory_recall_telemetry` | `reader` | `R0` | write | no | yes | no | no |
 | `project_aliases` | Project aliases. | `list_project_key_aliases` | `reader` | `R0` | read | no | no | no | no |
 | `upsert_project_alias` | Upsert project alias. | `upsert_project_key_alias` | `maintainer` | `R2` | write | no | yes | no | no |
 

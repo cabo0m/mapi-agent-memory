@@ -77,7 +77,7 @@ def test_migration_0030_enables_exact_review_only_rollout() -> None:
     assert flag["allowed_project_keys"] == "mapi"
     assert flag["allowed_scope_codes"] == "project"
     assert flag["read_only_mode"] == 1
-    assert db_migrations.MIGRATION_SEQUENCE[-1][0] == "0032_retire_bridge_mailbox"
+    assert db_migrations.MIGRATION_SEQUENCE[-1][0] == "0034_recall_importance_decoupling"
 
 
 def test_old_low_test_memory_becomes_soft_archive_candidate() -> None:

@@ -13,6 +13,7 @@ from typing import Any
 
 from app.runtime.freshness import mutation_freshness_guard
 from app.workshops.runtime_registry import get_workshop_handler
+from app.workshops.idempotency import execute_idempotent, idempotency_error_payload
 from app.workshops.security_audit import record_security_audit, security_audit_path
 from mcp_surface import current_surface_profile, lookup_workshop_action, profile_allows
 
@@ -94,6 +95,8 @@ def run_workshop_action_payload(
     normalize_optional_text: Callable[[Any], str | None],
     payload: dict[str, Any] | None = None,
     payload_json: str | None = None,
+    idempotency_key: str | None = None,
+    get_db_connection: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     """Validate and dispatch one compact workshop action."""
     profile = current_surface_profile()
@@ -166,6 +169,14 @@ def run_workshop_action_payload(
             "repository_head": freshness.get("repository_head"),
             "repository_details": freshness.get("repository_details") or {},
         }
+    if idempotency_key is not None and resolved.risk_class == "R0":
+        return idempotency_error_payload(
+            "idempotency_not_applicable",
+            key=idempotency_key,
+            area=workshop.area,
+            action=resolved.action,
+            risk_class=resolved.risk_class,
+        )
     handler = get_workshop_handler(resolved.tool_name)
     if handler is None or not callable(handler):
         return {"status": "error", "error": "handler_not_found", "tool_name": resolved.tool_name}
@@ -198,7 +209,23 @@ def run_workshop_action_payload(
             audit_path=operation_audit_path,
         )
     try:
-        result = handler(**call_payload)
+        if idempotency_key is not None:
+            if get_db_connection is None:
+                return idempotency_error_payload(
+                    "idempotency_backend_unavailable",
+                    key=idempotency_key,
+                    area=workshop.area,
+                    action=resolved.action,
+                )
+            result = execute_idempotent(
+                get_db_connection=get_db_connection,
+                idempotency_key=idempotency_key,
+                operation_name=f"workshop:{workshop.area}:{resolved.action}",
+                request_payload=call_payload,
+                handler=lambda: handler(**call_payload),
+            )
+        else:
+            result = handler(**call_payload)
     except Exception:
         if should_audit_execution:
             record_security_audit(

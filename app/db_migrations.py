@@ -2012,6 +2012,63 @@ def _migration_0032_retire_bridge_mailbox(conn: sqlite3.Connection) -> None:
     cursor.execute("DROP TABLE IF EXISTS bridge_threads")
 
 
+def _migration_0033_mcp_idempotency_requests(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_idempotency_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            operation_name TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('started','completed','in_doubt')),
+            result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+            error_type TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_idempotency_operation_status "
+        "ON mcp_idempotency_requests(operation_name, status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_idempotency_updated "
+        "ON mcp_idempotency_requests(updated_at)"
+    )
+
+
+def _migration_0034_recall_importance_decoupling(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_events_recall_recorded "
+        "ON memory_events(memory_id, event_type, id DESC)"
+    )
+    cursor.execute("DROP VIEW IF EXISTS memory_recall_telemetry")
+    cursor.execute(
+        """
+        CREATE VIEW memory_recall_telemetry AS
+        SELECT
+            m.id AS memory_id,
+            m.importance_score AS importance_score,
+            COALESCE(m.recall_count, 0) AS recall_count,
+            m.last_recalled_at AS last_recalled_at,
+            COUNT(CASE WHEN e.event_type = 'recall.recorded' THEN 1 END) AS recorded_event_count,
+            MAX(CASE WHEN e.event_type = 'recall.recorded' THEN e.created_at END) AS latest_recorded_event_at,
+            MAX(
+                COALESCE(m.recall_count, 0)
+                - COUNT(CASE WHEN e.event_type = 'recall.recorded' THEN 1 END),
+                0
+            ) AS legacy_unattributed_recall_count
+        FROM memories m
+        LEFT JOIN memory_events e ON e.memory_id = m.id
+        GROUP BY m.id
+        """
+    )
+
+
 MIGRATION_SEQUENCE = [
     ("0001_memory_core", _migration_0001_memory_core),
     ("0002_timeline_schema", _migration_0002_timeline_schema),
@@ -2045,6 +2102,8 @@ MIGRATION_SEQUENCE = [
     ("0030_memory_retention_policy_v2", _migration_0030_memory_retention_policy_v2),
     ("0031_private_remote_auth", _migration_0031_private_remote_auth),
     ("0032_retire_bridge_mailbox", _migration_0032_retire_bridge_mailbox),
+    ("0033_mcp_idempotency_requests", _migration_0033_mcp_idempotency_requests),
+    ("0034_recall_importance_decoupling", _migration_0034_recall_importance_decoupling),
 ]
 
 

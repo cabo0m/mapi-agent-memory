@@ -142,7 +142,7 @@ def test_new_public_quality_modules_do_not_embed_private_identity() -> None:
         root / "app" / "memory" / "hybrid_retrieval.py",
         root / "app" / "memory" / "steward.py",
     ]
-    forbidden = ("jagoda", "micha", "morenatech", "c:\\jagoda-memory-api")
+    forbidden = ("jagoda", "micha", "morenatech")
     for path in paths:
         text = path.read_text(encoding="utf-8").casefold()
         assert all(marker not in text for marker in forbidden), path

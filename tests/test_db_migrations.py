@@ -38,6 +38,8 @@ EXPECTED_VERSIONS = {
     "0030_memory_retention_policy_v2",
     "0031_private_remote_auth",
     "0032_retire_bridge_mailbox",
+    "0033_mcp_idempotency_requests",
+    "0034_recall_importance_decoupling",
 }
 
 
@@ -338,11 +340,17 @@ def test_bridge_retirement_upgrade_removes_only_bridge_tables() -> None:
         table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in protected_counts_before
     }
-    assert ran == ["0032_retire_bridge_mailbox"]
-    assert tables_after == tables_before - {"bridge_messages", "bridge_threads"}
+    assert ran == [
+        "0032_retire_bridge_mailbox",
+        "0033_mcp_idempotency_requests",
+        "0034_recall_importance_decoupling",
+    ]
+    assert tables_after == (tables_before - {"bridge_messages", "bridge_threads"}) | {"mcp_idempotency_requests"}
     assert protected_counts_after == protected_counts_before
     assert "0018_bridge_mailbox" in db_migrations.applied_migration_versions(conn)
     assert "0032_retire_bridge_mailbox" in db_migrations.applied_migration_versions(conn)
+    assert "0033_mcp_idempotency_requests" in db_migrations.applied_migration_versions(conn)
+    assert "0034_recall_importance_decoupling" in db_migrations.applied_migration_versions(conn)
 
 
 def test_bridge_retirement_drop_is_idempotent() -> None:

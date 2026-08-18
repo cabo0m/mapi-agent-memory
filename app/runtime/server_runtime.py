@@ -11,6 +11,7 @@ from app import backfill_logic, db_migrations, timeline as _timeline
 from app.runtime.context import configure_runtime_context, get_runtime_context
 
 from app.workshops.runtime_registry import bind_workshop_handlers
+from app.workshops.idempotency import execute_idempotent
 import server_core as _base
 
 mcp = _base.mcp
@@ -590,17 +591,31 @@ def undo_run(run_id: int, notes: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-def recall_memory(memory_id: int, strength: float = 0.1, recall_type: str = "manual") -> dict[str, Any]:
+def _recall_memory_once(
+    *,
+    memory_id: int,
+    strength: float,
+    recall_type: str,
+    source: str | None,
+) -> dict[str, Any]:
     conn = _base.get_db_connection()
     try:
-        memory = _base.require_memory_row(conn, memory_id)
-        current_importance = float(memory["importance_score"] or 0.0)
-        new_importance = _base.normalize_score(current_importance + float(strength))
-        recalled_at = _base.utc_now_iso()
-        conn.execute(
-            "UPDATE memories SET importance_score = ?, recall_count = recall_count + 1, last_recalled_at = ?, last_accessed_at = ? WHERE id = ?",
-            (new_importance, recalled_at, recalled_at, memory_id),
+        result = _base.recall_memory_payload(
+            conn,
+            memory_id=memory_id,
+            strength=strength,
+            recall_type=recall_type,
+            source=source,
+            commit=False,
+            require_memory_row=_base.require_memory_row,
+            normalize_score=_base.normalize_score,
+            normalize_optional_text=_base.normalize_optional_text,
+            utc_now_iso=_base.utc_now_iso,
+            insert_memory_event=_base.insert_memory_event,
+            row_to_dict=_base.row_to_dict,
+            enrich_memory_dict=_base.enrich_memory_dict,
         )
+        recalled_at = result["telemetry_changes"]["last_recalled_at"]
         operation_id = _timeline.new_operation_id("mem")
         _timeline.record_timeline_event(
             conn,
@@ -608,26 +623,52 @@ def recall_memory(memory_id: int, strength: float = 0.1, recall_type: str = "man
             event_time=recalled_at,
             memory_id=int(memory_id),
             operation_id=operation_id,
-            source_table="memories",
-            source_row_id=int(memory_id),
-            origin=recall_type,
+            source_table="memory_events",
+            source_row_id=int(result["event"]["id"]),
+            origin=result["recall_type"],
             payload={
-                "strength": float(strength),
-                "old_importance_score": current_importance,
-                "new_importance_score": new_importance,
+                "schema": result["schema"],
+                "strength": result["strength"],
+                "source": result["source"],
+                "old_recall_count": result["telemetry_changes"]["old_recall_count"],
+                "new_recall_count": result["telemetry_changes"]["new_recall_count"],
+                "importance_score": result["importance_decoupling"]["new_importance_score"],
+                "importance_changed": False,
             },
             now_fn=_base.utc_now_iso,
         )
         conn.commit()
-        updated = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        result["timeline_operation_id"] = operation_id
+        return result
     finally:
         conn.close()
-    return {
-        "status": "recalled",
+
+
+def recall_memory(
+    memory_id: int,
+    strength: float = 0.1,
+    recall_type: str = "manual",
+    source: str | None = "runtime",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    request_payload = {
+        "memory_id": int(memory_id),
+        "strength": float(strength),
         "recall_type": recall_type,
-        "updated_memory": _base.row_to_dict(updated),
-        "activation_changes": [{"memory_id": memory_id, "old_importance_score": current_importance, "new_importance_score": new_importance}],
+        "source": source,
     }
+    return execute_idempotent(
+        get_db_connection=get_db_connection,
+        idempotency_key=idempotency_key,
+        operation_name="direct:recall_memory",
+        request_payload=request_payload,
+        handler=lambda: _recall_memory_once(
+            memory_id=memory_id,
+            strength=strength,
+            recall_type=recall_type,
+            source=source,
+        ),
+    )
 
 
 @_replace_mcp_tool
