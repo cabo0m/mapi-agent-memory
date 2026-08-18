@@ -311,7 +311,8 @@ def test_relation_rollback_refuses_legacy_supports_link(server: Any, memory_fact
     assert "link_not_created_by_evidence_relation_apply" in preview["blocking_reasons"]
 
 
-def test_workshop_relation_apply_and_rollback_contract(server: Any, memory_factory) -> None:
+def test_workshop_relation_apply_and_rollback_contract(server: Any, memory_factory, monkeypatch) -> None:
+    monkeypatch.setenv("MCP_SURFACE_PROFILE", "maintainer")
     source = _memory(memory_factory, summary="Workshop source")
     derived = _memory(memory_factory, summary="Workshop derived")
     preview = server.run_workshop_action(

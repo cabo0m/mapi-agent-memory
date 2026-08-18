@@ -32,7 +32,7 @@ os.environ["MAPI_PYTEST_SESSION_ROOT"] = str(PYTEST_SESSION_ROOT)
 os.environ["MAPI_PYTEST_SESSION_DB_PATH"] = str(PYTEST_SESSION_DB_PATH)
 # Workshop tests run with an explicit non-admin operator surface. Tests of the
 # missing-profile contract remove this variable locally and assert public.
-os.environ.setdefault("MCP_SURFACE_PROFILE", "clean_operator")
+os.environ["MCP_SURFACE_PROFILE"] = "clean_operator"
 
 _sitecustomize_path = PYTEST_SESSION_ROOT / "sitecustomize.py"
 _sitecustomize_path.write_text(
