@@ -41,6 +41,20 @@ WORKSHOP = Workshop(
             risk='low',
             payload_schema=None,
         ),
+        WorkshopAction(
+            action='reconstruct_day',
+            tool_name='reconstruct_day',
+            purpose='Reconstruct one local calendar day from durable first-party MAPI evidence.',
+            min_profile='clean_operator',
+            risk='low',
+            payload_schema={
+                'date': 'str',
+                'timezone': 'str',
+                'project_key': 'str|null',
+                'limit': 'int',
+                'include_content': 'bool',
+            },
+        ),
     ),
     guardrails=(),
 )

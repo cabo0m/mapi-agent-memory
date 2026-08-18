@@ -1526,6 +1526,8 @@ def run_server() -> None:
     from app.runtime.remote_auth import configure_remote_auth
     from app.runtime.remote_auth_config import RemoteAuthConfig
     from app.runtime.writer_guard import configure_writer_guard
+    from app.runtime.backpressure import McpBackpressureMiddleware, configure_backpressure_from_env
+    from starlette.middleware import Middleware
 
     host = os.environ.get("MAPI_RUNTIME_HOST", "127.0.0.1")
     port = int(os.environ.get("MAPI_RUNTIME_PORT", "8015"))
@@ -1536,8 +1538,17 @@ def run_server() -> None:
     configure_writer_guard(db_path=DB_PATH)
     _apply_startup_migrations()
     configure_remote_auth(mcp, db_path=DB_PATH, config=remote_config)
+    backpressure = configure_backpressure_from_env()
     initialize_runtime_metadata(force=True)
     if sys.platform == "win32":
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    mcp.run(transport="http", host=host, port=port, path="/mcp/")
+    mcp.run(
+        transport="http",
+        host=host,
+        port=port,
+        path="/mcp/",
+        stateless_http=False,
+        middleware=[Middleware(McpBackpressureMiddleware, state=backpressure)],
+        uvicorn_config={"timeout_keep_alive": int(backpressure.keepalive_seconds)},
+    )

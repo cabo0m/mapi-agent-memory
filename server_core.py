@@ -49,6 +49,7 @@ from app.actor_context import (
     resolve_system_actor,
 )
 from app.workshops.runner import run_workshop_action_payload
+from app.runtime.backpressure import transport_status_payload
 from app.runtime.private_mode import effective_multiuser_flag_enabled, private_owner_key, runtime_mode
 from app.runtime.context import (
     configure_runtime_context,
@@ -103,6 +104,7 @@ from app.bootstrap.agent_core import (
     project_purpose_for,
 )
 from app.conversations.archive_tools import archive_conversation_payload, get_conversation_payload, list_conversations_payload, search_verbatim_payload
+from app.conversations.day_reconstruction import reconstruct_day_payload
 from app.features.tool_payloads import (
     compatibility_feature_flag,
     evaluate_feature_flag_payload,
@@ -214,6 +216,8 @@ from app.memory.linking import (
 )
 from app.memory.observability import queue_observability_metrics_payload
 from app.memory.ownership import bulk_set_memory_owner_payload, set_memory_owner_payload
+from app.memory.provenance_backfill import apply_provenance_backfill, build_provenance_backfill_preview
+from app.memory.provenance_context import resolve_write_provenance
 from app.memory.provenance import get_memory_provenance_payload, list_memory_audit_payload
 from app.memory.project_keys import (
     list_project_key_aliases_payload,
@@ -7849,7 +7853,7 @@ def _create_memory_direct(
             expired_due_at=expired_due_at,
             priority=priority,
         )
-        _insert_memory_event(
+        creation_event = _insert_memory_event(
             conn,
             memory_id=int(memory["id"]),
             event_type="memory_v2.created",
@@ -7863,6 +7867,15 @@ def _create_memory_direct(
                 "project_key": memory.get("project_key"),
             },
         )
+        if not normalize_optional_text(memory.get("source_event_ref")):
+            generated_source_event_ref = f"memory-event:{int(creation_event['id'])}"
+            conn.execute(
+                "UPDATE memories SET source_event_ref=?, updated_at=? WHERE id=? AND (source_event_ref IS NULL OR trim(source_event_ref)='')",
+                (generated_source_event_ref, utc_now_iso(), int(memory["id"])),
+            )
+            refreshed = conn.execute("SELECT * FROM memories WHERE id = ?", (int(memory["id"]),)).fetchone()
+            if refreshed is not None:
+                memory = enrich_memory_dict(row_to_dict(refreshed))
         if supersedes_memory_id is not None:
             transition = apply_direct_supersession_transition(
                 conn,
@@ -7975,6 +7988,13 @@ def save_memory(
     normalized_content = normalize_memory_content(content)
     if not normalized_content:
         return {"status": "error", "error": "content cannot be empty"}
+    provenance = resolve_write_provenance(
+        conversation_key=conversation_key,
+        source_event_ref=source_event_ref,
+        normalize_optional_text=normalize_optional_text,
+    )
+    conversation_key = provenance["conversation_key"]
+    source_event_ref = provenance["source_event_ref"]
     normalized_project = normalize_optional_text(project_key)
     normalized_scope = normalize_scope_code(scope_code) or ("project" if normalized_project else None)
     conn = get_db_connection()
@@ -8063,6 +8083,8 @@ def save_memory(
                 "input_fingerprint": preflight["input_fingerprint"],
                 "sensitivity_class": preflight["sensitivity"]["sensitivity_class"],
                 "source_event_ref": normalize_optional_text(source_event_ref),
+                "conversation_key": normalize_optional_text(conversation_key),
+                "provenance_origins": list(provenance.get("origins") or []),
                 "project_key": normalized_project,
                 "scope_code": normalized_scope,
                 "importance_policy": importance_policy,
@@ -8080,6 +8102,11 @@ def save_memory(
         "input_fingerprint": preflight["input_fingerprint"],
         "sensitivity_class": preflight["sensitivity"]["sensitivity_class"],
         "event_id": int(event["id"]),
+        "provenance": {
+            "conversation_key": normalize_optional_text(conversation_key),
+            "source_event_ref": normalize_optional_text(source_event_ref),
+            "origins": list(provenance.get("origins") or []),
+        },
         "importance_policy": importance_policy,
         "memory": created["memory"],
     }
@@ -8099,13 +8126,18 @@ def propose_memory(
     """Queue an uncertain or agent-generated memory proposal for review."""
     if not profile_allows(current_surface_profile(), "agent"):
         return {"status": "denied", "error": "propose_memory_requires_agent"}
+    provenance = resolve_write_provenance(
+        conversation_key=conversation_key,
+        source_event_ref=source_event_ref,
+        normalize_optional_text=normalize_optional_text,
+    )
     result = save_memory_capture_proposal(
         content=content,
         project_key=project_key,
         scope_code=scope_code,
         source_context=source_context,
-        conversation_key=conversation_key,
-        source_event_ref=source_event_ref,
+        conversation_key=provenance["conversation_key"],
+        source_event_ref=provenance["source_event_ref"],
         hint=hint,
         expires_at=expires_at,
     )
@@ -9119,6 +9151,83 @@ def get_memory_provenance(memory_id: int) -> dict[str, Any]:
             apply_ownership_defaults=_apply_ownership_defaults,
             normalize_optional_text=normalize_optional_text,
         )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def preview_memory_provenance_backfill(
+    project_key: str | None = None,
+    sample_limit: int = 50,
+) -> dict[str, Any]:
+    """Preview evidence-bound repair of legacy provenance gaps without mutation."""
+    conn = get_db_connection()
+    try:
+        result = build_provenance_backfill_preview(
+            conn,
+            project_key=project_key,
+            sample_limit=max(1, min(int(sample_limit), 200)),
+        )
+        result.pop("_candidates", None)
+        return result
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def apply_memory_provenance_backfill(
+    expected_preview_hash: str,
+    project_key: str | None = None,
+    applied_by: str = "operator",
+    confirm_provenance_repair: bool = False,
+) -> dict[str, Any]:
+    """Apply a fresh provenance preview after creating a trusted SQLite backup."""
+    if not confirm_provenance_repair:
+        return {
+            "status": "blocked",
+            "reason": "confirm_provenance_repair_required",
+            "mutations_performed": 0,
+        }
+    conn = get_db_connection()
+    try:
+        preview = build_provenance_backfill_preview(conn, project_key=project_key)
+        normalized_expected = normalize_required_text(expected_preview_hash, "expected_preview_hash")
+        if preview["preview_hash"] != normalized_expected:
+            return {
+                "status": "blocked",
+                "reason": "preview_hash_mismatch",
+                "expected_preview_hash": normalized_expected,
+                "current_preview_hash": preview["preview_hash"],
+                "candidate_count": preview["candidate_count"],
+                "mutations_performed": 0,
+            }
+
+        backup_dir = Path(DATA_DIR) / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = utc_now_iso().replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+        backup_path = backup_dir / f"mapi-memory-provenance-pre-{stamp}.db"
+        backup_conn = sqlite3.connect(str(backup_path))
+        try:
+            conn.backup(backup_conn)
+        finally:
+            backup_conn.close()
+        backup_sha256 = hashlib.sha256(backup_path.read_bytes()).hexdigest()
+        backup_ref = f"{backup_path}|sha256:{backup_sha256}"
+
+        result = apply_provenance_backfill(
+            conn,
+            expected_preview_hash=normalized_expected,
+            project_key=project_key,
+            applied_by=applied_by,
+            backup_ref=backup_ref,
+            insert_memory_event=_insert_memory_event,
+            utc_now_iso=utc_now_iso,
+        )
+        updated_ids = list(result.pop("updated_memory_ids", []) or [])
+        result["updated_memory_id_sample"] = updated_ids[:100]
+        result["backup_path"] = str(backup_path)
+        result["backup_sha256"] = backup_sha256
+        return result
     finally:
         conn.close()
 
@@ -17300,6 +17409,12 @@ def preview_memory_steward_nightly(
     )
 
 
+@mcp.tool
+def get_mcp_transport_status() -> dict[str, Any]:
+    """Read-only transport/backpressure/keepalive contract and counters."""
+    return transport_status_payload()
+
+
 # ---------------------------------------------------------------------------
 # Vector / Semantic Search
 # ---------------------------------------------------------------------------
@@ -17429,6 +17544,34 @@ def search_verbatim(
     finally:
         conn.close()
 
+
+
+@mcp.tool
+def reconstruct_day(
+    date: str,
+    timezone: str = "Europe/Warsaw",
+    project_key: str | None = None,
+    limit: int = 200,
+    include_content: bool = True,
+) -> dict[str, Any]:
+    """Reconstruct one local calendar day from durable MAPI evidence.
+
+    Checks memories, exact ISO-date mentions, conversation archives and timeline
+    events. Coverage explicitly controls whether a no-data claim is justified for
+    the checked first-party sources.
+    """
+    conn = get_db_connection()
+    try:
+        return reconstruct_day_payload(
+            conn,
+            date=date,
+            timezone_name=timezone,
+            project_key=project_key,
+            limit=limit,
+            include_content=include_content,
+        )
+    finally:
+        conn.close()
 
 
 # Bind only handlers declared by workshop packages.

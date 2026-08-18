@@ -64,6 +64,7 @@ PROTECTED_LIFECYCLE_TOOLS = frozenset(
         "create_memory",
         "apply_memory_hygiene",
         "rollback_memory_hygiene_run",
+        "apply_memory_provenance_backfill",
     }
 )
 
@@ -135,6 +136,7 @@ BACKUP_REQUIRED_TOOLS = frozenset(
         "apply_memory_retention_batch",
         "apply_memory_hygiene",
         "rollback_memory_hygiene_run",
+        "apply_memory_provenance_backfill",
     }
 )
 

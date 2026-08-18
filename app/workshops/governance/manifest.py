@@ -104,6 +104,14 @@ WORKSHOP = Workshop(
  'rolled_back_by': 'str', 'notes': 'str|null'},
         ),
         WorkshopAction(
+            action='transport_status',
+            tool_name='get_mcp_transport_status',
+            purpose='Read-only HTTP backpressure and keepalive contract with runtime counters.',
+            min_profile='reader',
+            risk='low',
+            payload_schema={},
+        ),
+        WorkshopAction(
             action='runtime_readiness',
             tool_name='get_runtime_readiness',
             purpose='Read-only proof of active runtime identity and freshness.',

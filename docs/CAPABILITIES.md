@@ -81,6 +81,8 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `project_brief` | Project brief. | `get_project_brief` | `reader` | `R0` | read | no | no | no | no |
 | `project_card` | Project card. | `get_project_card` | `reader` | `R0` | read | no | no | no | no |
 | `recent_project_changes` | Recent project changes. | `get_recent_project_changes` | `reader` | `R0` | read | no | no | no | no |
+| `provenance_backfill_preview` | Provenance backfill preview. | `preview_memory_provenance_backfill` | `reader` | `R0` | read | no | no | no | no |
+| `provenance_backfill_apply` | Provenance backfill apply. | `apply_memory_provenance_backfill` | `admin` | `R3` | write | no | yes | no | no |
 | `get` | Get. | `get_memory` | `reader` | `R0` | read | no | no | no | no |
 | `links` | Links. | `get_memory_links` | `reader` | `R0` | write | no | yes | no | no |
 | `save` | Save. | `save_memory` | `agent` | `R1` | write | no | yes | no | no |
@@ -128,6 +130,7 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `get_conversation` | Get conversation. | `get_conversation` | `reader` | `R0` | read | no | no | no | no |
 | `list_conversations` | List conversations. | `list_conversations` | `reader` | `R0` | read | no | no | no | no |
 | `search_verbatim` | Search verbatim. | `search_verbatim` | `reader` | `R0` | read | no | no | no | no |
+| `reconstruct_day` | Reconstruct day. | `reconstruct_day` | `reader` | `R0` | read | no | no | no | no |
 
 ## `conflicts`
 
@@ -164,6 +167,7 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `hygiene_run` | Hygiene run. | `get_memory_hygiene_run` | `reader` | `R0` | read | no | no | no | no |
 | `hygiene_rollback_preview` | Hygiene rollback preview. | `preview_memory_hygiene_rollback` | `reader` | `R0` | read | no | no | no | no |
 | `hygiene_rollback` | Hygiene rollback. | `rollback_memory_hygiene_run` | `admin` | `R3` | write | no | yes | no | no |
+| `transport_status` | Transport status. | `get_mcp_transport_status` | `reader` | `R0` | read | no | no | no | no |
 | `runtime_readiness` | Runtime readiness. | `get_runtime_readiness` | `reader` | `R0` | write | no | yes | no | no |
 | `private_runtime` | Private runtime. | `get_private_runtime_status` | `reader` | `R0` | read | no | no | no | no |
 | `provider_observability` | Provider observability. | `get_sandman_provider_observability` | `reader` | `R0` | read | no | no | no | no |
