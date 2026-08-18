@@ -18,12 +18,26 @@ WORKSHOP = Workshop(
             payload_schema={'text_query': 'str', 'project_key': 'str|null', 'project_key_mode': 'str', 'limit': 'int', 'include_history': 'bool', 'debug': 'bool'},
         ),
         WorkshopAction(
+            action='gravity_preview',
+            tool_name='get_agent_gravity_preview',
+            purpose='Read-only source-bound project resurfacing preview; never creates truth or links.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={'query': 'str', 'project_key': 'str', 'limit': 'int', 'include_debug': 'bool'},
+        ),
+        WorkshopAction(
+            action='gravity_shadow',
+            tool_name='get_agent_gravity_shadow',
+            purpose='Read-only comparison of canonical memory ids against a Gravity-augmented shadow view.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={'query': 'str', 'project_key': 'str', 'baseline_memory_ids_json': 'str', 'max_injections': 'int'},
+        ),
+        WorkshopAction(
             action='hybrid_search',
             tool_name='hybrid_search_memories',
             purpose='Deterministic Retrieval v2: lexical + semantic + recency with project-bound candidates.',
             min_profile='clean_operator',
             risk='low',
-            payload_schema={'query': 'str', 'project_key': 'str|null', 'limit': 'int', 'include_debug': 'bool'},
+            payload_schema={'query': 'str', 'project_key': 'str|null', 'limit': 'int', 'include_gravity': 'bool', 'include_debug': 'bool'},
         ),
         WorkshopAction(
             action='context',

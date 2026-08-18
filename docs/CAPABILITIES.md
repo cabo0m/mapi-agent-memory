@@ -12,6 +12,8 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | Action | Purpose | Tool | Access | Risk | Read/write | External model | Mutates data | Preview | Rollback |
 |---|---|---|---|---|---|---|---|---|---|
 | `find` | Find. | `find_memories` | `reader` | `R0` | read | no | no | no | no |
+| `gravity_preview` | Gravity preview. | `get_agent_gravity_preview` | `reader` | `R0` | read | no | no | no | no |
+| `gravity_shadow` | Gravity shadow. | `get_agent_gravity_shadow` | `reader` | `R0` | read | no | no | no | no |
 | `hybrid_search` | Hybrid search. | `hybrid_search_memories` | `reader` | `R0` | read | no | no | no | no |
 | `context` | Context. | `build_agent_context` | `reader` | `R0` | read | no | no | no | no |
 | `steward_before_action` | Steward before action. | `preview_memory_steward_before_action` | `reader` | `R0` | read | no | no | no | no |

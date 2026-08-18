@@ -234,7 +234,34 @@ def _commitment_item(item: dict[str, Any]) -> bool:
 def build_agent_commitment_ledger_payload(conn: Any, *, subject_key: str | None, display_name: str | None, project_key: str | None, include_global: bool, limit: int, include_content: bool, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
     identity = resolve_agent_identity(subject_key=subject_key, display_name=display_name, project_key=project_key)
     items, reason_map = _load_candidates(conn, identity, include_global=bool(include_global), row_to_dict=row_to_dict, limit=limit)
-    commitments = [_compact(item, include_content=include_content, reason_codes=reason_map.get(int(item["id"]))) for item in items if _commitment_item(item)]
+    commitments = []
+    for item in items:
+        if not _commitment_item(item):
+            continue
+        compact = _compact(item, include_content=include_content, reason_codes=reason_map.get(int(item["id"])))
+        tags = _tags(item.get("tags"))
+        if tags & {"security", "safety", "guardrail", "invariant"}:
+            commitment_kind = "behavioral_guardrail"
+            action_key = "agent.behavior"
+        elif _norm(item.get("truth_kind")) == "decision" or _norm(item.get("entry_type")) == "decision":
+            commitment_kind = "project_workflow_rule"
+            action_key = "agent.behavior"
+        else:
+            commitment_kind = "operator_instruction"
+            action_key = "agent.behavior"
+        compact.update({
+            "statement": _text(item.get("summary_short")) or _text(item.get("title")) or (_text(item.get("content")) if include_content else f"Memory #{int(item['id'])} commitment"),
+            "status": "active",
+            "source_memory_id": int(item["id"]),
+            "commitment_kind": commitment_kind,
+            "action_key": action_key,
+            "polarity": "must",
+            "scope": {
+                "scope_code": item.get("scope_code"),
+                "project_key": None if _text(item.get("project_key")) == identity.project_key else item.get("project_key"),
+            },
+        })
+        commitments.append(compact)
     commitments.sort(key=lambda item: (-float(item.get("importance_score") or 0.0), -float(item.get("confidence_score") or 0.0), -int(item["id"])))
     source_ids = [int(item["id"]) for item in commitments]
     return {

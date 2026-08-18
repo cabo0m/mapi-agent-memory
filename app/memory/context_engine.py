@@ -142,6 +142,7 @@ def _commitment_items(ledger: Mapping[str, Any], canonical_project_key: str) -> 
                 "testing.scope",
                 "memory.use",
                 "memory.operation_communication",
+                "agent.behavior",
             }
             if action_key not in universal_action_keys:
                 # Unscoped commitments are admitted only when operationally universal.

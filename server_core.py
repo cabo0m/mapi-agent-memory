@@ -220,6 +220,12 @@ from app.memory.linking import (
     run_memory_linking_pass_payload,
 )
 from app.memory.observability import queue_observability_metrics_payload
+from app.memory.agent_gravity import (
+    build_agent_gravity_preview,
+    build_gravity_context_block,
+    build_gravity_shadow_comparison,
+    gravity_policy,
+)
 from app.memory.agent_self_model import (
     build_agent_autobiographical_timeline_payload,
     build_agent_commitment_ledger_payload,
@@ -17336,11 +17342,97 @@ def list_memories_page(
     return result
 
 
+def _load_project_gravity_candidates(project_key: str, limit: int = 200) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 500))
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE project_key=? AND archived_at IS NULL
+              AND COALESCE(state_code, 'active') NOT IN ('archived','superseded')
+            ORDER BY identity_weight DESC, importance_score DESC, recall_count DESC, id DESC
+            LIMIT ?
+            """,
+            (project_key, safe_limit),
+        ).fetchall()
+        return [enrich_memory_dict(row_to_dict(row)) for row in rows]
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_agent_gravity_preview(
+    query: str,
+    project_key: str = "demo-project",
+    limit: int = 8,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Read-only source-bound resurfacing preview for one project and query."""
+    clean_query = normalize_required_text(query, "query")
+    requested = normalize_required_text(project_key, "project_key")
+    conn = get_db_connection()
+    try:
+        _values, _mode, canonical = _resolve_project_key_filter(conn, project_key=requested, project_key_mode="exact")
+    finally:
+        conn.close()
+    canonical = canonical or requested
+    candidates = _load_project_gravity_candidates(canonical, limit=200)
+    self_capsule = get_agent_self_capsule(project_key=None, include_global=True, limit=50, include_content=False)
+    self_candidates: list[dict[str, Any]] = []
+    for section_name, source_kind in (
+        ("identity", "self_capsule"),
+        ("preferences", "self_capsule"),
+        ("relationships", "self_capsule"),
+        ("commitments", "commitment_ledger"),
+        ("recent_autobiographical_events", "autobiographical_timeline"),
+    ):
+        for raw in self_capsule.get(section_name) or []:
+            item = dict(raw)
+            item["source_kinds"] = sorted(set(list(item.get("source_kinds") or []) + [source_kind]))
+            self_candidates.append(item)
+    return build_agent_gravity_preview(
+        query=clean_query,
+        project_key=canonical,
+        candidates=[*candidates, *self_candidates],
+        max_results=int(limit),
+        include_debug=bool(include_debug),
+    )
+
+
+@mcp.tool
+def get_agent_gravity_shadow(
+    query: str,
+    project_key: str = "demo-project",
+    baseline_memory_ids_json: str = "[]",
+    max_injections: int = 2,
+) -> dict[str, Any]:
+    """Compare canonical baseline ids with a read-only Gravity-augmented shadow view."""
+    try:
+        raw_ids = json.loads(str(baseline_memory_ids_json or "[]"))
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "error": "baseline_memory_ids_json_invalid", "detail": str(exc)}
+    if not isinstance(raw_ids, list):
+        return {"status": "error", "error": "baseline_memory_ids_json_must_be_array"}
+    baseline_ids = []
+    for value in raw_ids:
+        memory_id = int(value)
+        if memory_id > 0 and memory_id not in baseline_ids:
+            baseline_ids.append(memory_id)
+    preview = get_agent_gravity_preview(query=query, project_key=project_key, limit=12, include_debug=False)
+    return build_gravity_shadow_comparison(
+        baseline_source_memory_ids=baseline_ids,
+        gravity_payload=preview,
+        max_injections=max_injections,
+    )
+
+
 @mcp.tool
 def hybrid_search_memories(
     query: str,
     project_key: str | None = None,
     limit: int = 10,
+    include_gravity: bool = True,
     include_debug: bool = False,
 ) -> dict[str, Any]:
     """Fuse lexical and semantic retrieval with recency using a deterministic RRF ranker.
@@ -17413,11 +17505,23 @@ def hybrid_search_memories(
     finally:
         conn.close()
 
-    gravity_block = {
-        "status": "disabled",
-        "reason": "public_evidence_bound_gravity_not_enabled_yet",
-        "items": [],
-    }
+    gravity_block = (
+        build_agent_gravity_preview(
+            query=normalized_query,
+            project_key=canonical_project_key or "",
+            candidates=[dict(item, source_kinds=["retrieval_pool"]) for item in candidate_items.values()],
+            max_results=8,
+            include_debug=bool(include_debug),
+        )
+        if include_gravity and canonical_project_key
+        else {
+            "status": "disabled",
+            "reason": "disabled_by_caller" if not include_gravity else "project_scope_required",
+            "items": [],
+            "attractors": [],
+            "source_memory_ids": [],
+        }
+    )
     result = fuse_hybrid_results(
         query=normalized_query,
         requested_project_key=requested_project_key,
@@ -17467,19 +17571,22 @@ def build_agent_context(
         limit=8,
         include_debug=True,
     )
-    # The private runtime has a richer commitment ledger. Public MAPI keeps the
-    # context contract source-bound and reports the channel as unavailable until
-    # the neutral commitment contract is ported.
-    commitment_ledger = {
-        "status": "unavailable",
-        "commitments": [],
-        "source_memory_ids": [],
-    }
-    gravity_block = {
-        "status": "disabled",
-        "reason": "public_evidence_bound_gravity_not_enabled_yet",
-        "items": [],
-    }
+    commitment_ledger = get_agent_commitment_ledger(
+        project_key=None, include_global=True, limit=100, include_content=False
+    )
+    canonical_ids = [
+        int(item.get("id") or 0)
+        for item in retrieval.get("items") or []
+        if int(item.get("id") or 0) > 0
+    ]
+    gravity_preview = get_agent_gravity_preview(
+        query=intent, project_key=canonical_project_key, limit=8, include_debug=bool(include_debug)
+    )
+    gravity_block = build_gravity_context_block(
+        gravity_payload=gravity_preview,
+        canonical_source_memory_ids=canonical_ids,
+        max_items=2,
+    )
     result = build_agent_context_payload(
         intent=intent,
         requested_project_key=requested_project_key,
@@ -17494,7 +17601,8 @@ def build_agent_context(
         result["debug"] = {
             "retrieval": retrieval.get("debug") or {},
             "bootstrap_policy": restore.get("bootstrap_policy") or {},
-            "deferred_channels": ["commitment_ledger", "evidence_bound_gravity"],
+            "gravity_preview": gravity_preview.get("debug") or {},
+            "deferred_channels": [],
         }
     return result
 
