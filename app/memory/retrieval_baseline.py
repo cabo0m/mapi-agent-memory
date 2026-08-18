@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+from importlib.resources import files
 import statistics
 import time
 from typing import Any, Callable, Iterable
@@ -13,6 +14,83 @@ from typing import Any, Callable, Iterable
 RETRIEVAL_BASELINE_SCHEMA = "mapi_retrieval_baseline.v1"
 RETRIEVAL_ELIGIBLE_STATE_CODES = ("active", "validated")
 RETRIEVAL_ELIGIBLE_V2_STATUS = "active"
+
+
+RETRIEVAL_GOLDEN_CORPUS_SCHEMA = "mapi_retrieval_golden_corpus.v2"
+_SELECTOR_FIELDS = frozenset({"project_key", "source_event_ref", "summary_short", "tags_contains", "content_contains"})
+
+
+def load_retrieval_golden_corpus() -> dict[str, Any]:
+    resource = files("app.memory.corpora").joinpath("retrieval_golden_v2.json")
+    payload = json.loads(resource.read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, dict) or payload.get("schema") != RETRIEVAL_GOLDEN_CORPUS_SCHEMA:
+        raise ValueError("invalid_retrieval_golden_corpus_schema")
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("invalid_retrieval_golden_corpus_cases")
+    return payload
+
+
+def _selector_ids(conn: Any, selector: dict[str, Any]) -> list[int]:
+    unknown = set(selector) - _SELECTOR_FIELDS
+    if unknown:
+        raise ValueError("unsupported_golden_selector_fields:" + ",".join(sorted(unknown)))
+    clauses: list[str] = ["1=1"]
+    params: list[Any] = []
+    for field in ("project_key", "source_event_ref", "summary_short"):
+        value = selector.get(field)
+        if value is not None:
+            clauses.append(f"{field} = ?")
+            params.append(str(value))
+    for field, column in (("tags_contains", "tags"), ("content_contains", "content")):
+        value = selector.get(field)
+        if value is not None:
+            clauses.append(f"INSTR(LOWER(COALESCE({column}, '')), LOWER(?)) > 0")
+            params.append(str(value))
+    rows = conn.execute(
+        "SELECT id FROM memories WHERE " + " AND ".join(clauses) + " ORDER BY id",
+        params,
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def materialize_golden_cases(conn: Any, corpus: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = corpus or load_retrieval_golden_corpus()
+    cases: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for raw in payload.get("cases") or []:
+        case = dict(raw)
+        expected_ids: set[int] = set()
+        forbidden_ids: set[int] = set()
+        missing_expected: list[dict[str, Any]] = []
+        for selector in case.pop("expected_selectors", []) or []:
+            ids = _selector_ids(conn, dict(selector))
+            if not ids:
+                missing_expected.append(dict(selector))
+            expected_ids.update(ids)
+        for selector in case.pop("forbidden_selectors", []) or []:
+            forbidden_ids.update(_selector_ids(conn, dict(selector)))
+        case["expected_ids"] = sorted(expected_ids)
+        case["forbidden_ids"] = sorted(forbidden_ids)
+        case.setdefault("expected_project_key", case.get("project_key"))
+        if missing_expected:
+            skipped.append({
+                "case_id": case.get("case_id"),
+                "reason": "required_fixture_missing",
+                "missing_expected_selectors": missing_expected,
+            })
+            continue
+        cases.append(case)
+    return {
+        "schema": RETRIEVAL_GOLDEN_CORPUS_SCHEMA,
+        "corpus_id": payload.get("corpus_id"),
+        "corpus_fingerprint": fingerprint(payload),
+        "cases": cases,
+        "skipped": skipped,
+        "case_count": len(payload.get("cases") or []),
+        "applicable_count": len(cases),
+        "skipped_count": len(skipped),
+    }
 
 
 def _canonical_json(value: Any) -> str:

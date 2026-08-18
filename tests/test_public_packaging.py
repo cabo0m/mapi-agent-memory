@@ -35,3 +35,12 @@ def test_capability_document_matches_registry() -> None:
 
 def test_missing_parent_package_is_reported_unavailable() -> None:
     assert _module_available("package_that_does_not_exist.child") is False
+
+
+def test_corpus_json_is_declared_as_package_data() -> None:
+    import tomllib
+    root = Path(__file__).resolve().parents[1]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = metadata["tool"]["setuptools"]["package-data"]
+    assert package_data["app.sandman.corpora"] == ["*.json"]
+    assert package_data["app.memory.corpora"] == ["*.json"]

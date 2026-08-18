@@ -24,6 +24,8 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `commitment_ledger` | Commitment ledger. | `get_agent_commitment_ledger` | `reader` | `R0` | read | no | no | no | no |
 | `autobiographical_timeline` | Autobiographical timeline. | `get_agent_autobiographical_timeline` | `reader` | `R0` | read | no | no | no | no |
 | `self_capsule` | Self capsule. | `get_agent_self_capsule` | `reader` | `R0` | read | no | no | no | no |
+| `self_delta` | Self delta. | `get_agent_self_delta` | `reader` | `R0` | read | no | no | no | no |
+| `self_narrative` | Self narrative. | `get_agent_self_narrative` | `reader` | `R0` | read | no | no | no | no |
 | `list_page` | List page. | `list_memories_page` | `reader` | `R0` | read | no | no | no | no |
 | `recent` | Recent. | `recent_memories` | `reader` | `R0` | read | no | no | no | no |
 | `restore_ritual` | Restore ritual. | `get_memory_restore_ritual` | `reader` | `R0` | read | no | no | no | no |
@@ -183,6 +185,8 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `hygiene_run` | Hygiene run. | `get_memory_hygiene_run` | `reader` | `R0` | read | no | no | no | no |
 | `hygiene_rollback_preview` | Hygiene rollback preview. | `preview_memory_hygiene_rollback` | `reader` | `R0` | read | no | no | no | no |
 | `hygiene_rollback` | Hygiene rollback. | `rollback_memory_hygiene_run` | `admin` | `R3` | write | no | yes | no | no |
+| `doctor` | Doctor. | `get_mapi_doctor_report` | `reader` | `R0` | read | no | no | no | no |
+| `recovery_plan` | Recovery plan. | `get_mapi_recovery_plan` | `reader` | `R0` | read | no | no | no | no |
 | `transport_status` | Transport status. | `get_mcp_transport_status` | `reader` | `R0` | read | no | no | no | no |
 | `runtime_readiness` | Runtime readiness. | `get_runtime_readiness` | `reader` | `R0` | write | no | yes | no | no |
 | `private_runtime` | Private runtime. | `get_private_runtime_status` | `reader` | `R0` | read | no | no | no | no |

@@ -46,46 +46,22 @@ def migrate() -> None:
 
 
 def doctor() -> None:
-    import server  # noqa: F401 - runtime import binds the authoritative handlers
+    from app.runtime.doctor import collect_doctor_report
 
-    from app.workshops.catalog import WORKSHOPS
-    from app.workshops.runtime_registry import validate_workshop_handler_registry
-    from mcp_surface import normalize_surface_profile, surface_manifest
-
-    path = _database_path()
-    migration_tail: str | None = None
-    database_ok = False
-    if path.exists():
-        try:
-            with sqlite3.connect(path) as connection:
-                row = connection.execute(
-                    "SELECT version FROM schema_migrations ORDER BY rowid DESC LIMIT 1"
-                ).fetchone()
-                migration_tail = str(row[0]) if row else None
-                database_ok = connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-        except sqlite3.Error:
-            database_ok = False
-
-    profile = normalize_surface_profile(os.environ.get("MCP_SURFACE_PROFILE", "agent"))
-    registry = validate_workshop_handler_registry()
-    optional = {
-        "semantic": _module_available("sentence_transformers") and _module_available("sqlite_vec"),
-        "gemini": _module_available("google.genai"),
-    }
-    result: dict[str, Any] = {
-        "status": "ready" if database_ok and registry["complete"] else "attention",
-        "python": sys.version.split()[0],
-        "database": str(path),
-        "database_ok": database_ok,
-        "migration_tail": migration_tail,
-        "profile": profile,
-        "visible_workshops": len(surface_manifest(profile)["workshops"]),
-        "registered_workshops": len(WORKSHOPS),
-        "registry_complete": bool(registry["complete"]),
-        "optional_capabilities": optional,
-    }
+    deep = "--deep" in sys.argv[1:]
+    result = collect_doctor_report(deep=deep)
     print(json.dumps(result, indent=2))
-    if result["status"] != "ready":
+    if result["status"] == "BLOCKED":
+        raise SystemExit(2)
+
+
+def recover() -> None:
+    from app.runtime.recovery import recover_runtime
+
+    execute = "--execute" in sys.argv[1:]
+    result = recover_runtime(execute=execute)
+    print(json.dumps(result, indent=2))
+    if result.get("status") in {"error", "attention"}:
         raise SystemExit(2)
 
 

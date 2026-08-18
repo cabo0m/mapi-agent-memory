@@ -1,0 +1,106 @@
+{
+  "schema": "mapi_retrieval_golden_corpus.v2",
+  "corpus_id": "public-demo-retrieval-v1",
+  "purpose": "Portable retrieval regression corpus resolved from deterministic public demo fixtures rather than database ids.",
+  "cases": [
+    {
+      "case_id": "demo_lifecycle_preview",
+      "purpose": "Lifecycle safety decision stays retrievable inside demo-project.",
+      "query": "lifecycle preview",
+      "project_key": "demo-project",
+      "expected_selectors": [
+        {
+          "project_key": "demo-project",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "Use explicit previews before lifecycle changes"
+        }
+      ],
+      "forbidden_selectors": [],
+      "channels": [
+        "lexical"
+      ],
+      "top_k": 5
+    },
+    {
+      "case_id": "demo_provenance_rule",
+      "purpose": "Durable provenance rule stays retrievable inside demo-project.",
+      "query": "durable memory provenance",
+      "project_key": "demo-project",
+      "expected_selectors": [
+        {
+          "project_key": "demo-project",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "Store provenance with durable memories"
+        }
+      ],
+      "forbidden_selectors": [],
+      "channels": [
+        "lexical"
+      ],
+      "top_k": 5
+    },
+    {
+      "case_id": "sample_research_sqlite",
+      "purpose": "Research storage fact stays project scoped.",
+      "query": "fictional research prototype test data local SQLite",
+      "project_key": "sample-research",
+      "expected_selectors": [
+        {
+          "project_key": "sample-research",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "The prototype uses a local SQLite database"
+        }
+      ],
+      "forbidden_selectors": [],
+      "channels": [
+        "lexical"
+      ],
+      "top_k": 5
+    },
+    {
+      "case_id": "sample_research_alias_resolution",
+      "purpose": "The public research-demo alias resolves to the canonical sample-research namespace.",
+      "query": "prototype storage decision",
+      "project_key": "research-demo",
+      "expected_project_key": "sample-research",
+      "expected_selectors": [
+        {
+          "project_key": "sample-research",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "Prototype storage decision",
+          "tags_contains": "current"
+        }
+      ],
+      "forbidden_selectors": [
+        {
+          "project_key": "sample-research",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "Prototype storage decision",
+          "tags_contains": "superseded"
+        }
+      ],
+      "channels": [
+        "lexical"
+      ],
+      "top_k": 10
+    },
+    {
+      "case_id": "project_scope_leakage_guard",
+      "purpose": "A sample-research storage record must never leak into a demo-project scoped query.",
+      "query": "SQLite local storage",
+      "project_key": "demo-project",
+      "expected_selectors": [],
+      "forbidden_selectors": [
+        {
+          "project_key": "sample-research",
+          "source_event_ref": "mapi-demo-seed-v1",
+          "summary_short": "The prototype uses a local SQLite database"
+        }
+      ],
+      "channels": [
+        "lexical"
+      ],
+      "top_k": 10
+    }
+  ]
+}

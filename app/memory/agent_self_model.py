@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -153,6 +153,9 @@ def _compact(item: dict[str, Any], *, include_content: bool, reason_codes: list[
         "conversation_key": item.get("conversation_key"),
         "created_at": item.get("created_at"),
         "updated_at": item.get("updated_at"),
+        "supersedes_memory_id": item.get("supersedes_memory_id"),
+        "superseded_by_memory_id": item.get("superseded_by_memory_id"),
+        "requires_user_confirmation": bool(item.get("requires_user_confirmation")),
         "evidence_reason_codes": list(reason_codes or []),
     }
     if include_content:
@@ -198,6 +201,17 @@ def _load_candidates(conn: Any, identity: AgentIdentity, *, include_global: bool
     return current_items, reasons
 
 
+def calculate_agent_self_snapshot_fingerprint(snapshot: dict[str, Any]) -> str:
+    """Fingerprint only evidence-bearing snapshot state, never debug or volatile metadata."""
+    material = {
+        "schema": AGENT_SELF_SNAPSHOT_SCHEMA,
+        "subject": dict(snapshot.get("subject") or {}),
+        "sections": dict(snapshot.get("sections") or {}),
+        "source_memory_ids": sorted(int(v) for v in snapshot.get("source_memory_ids") or [] if int(v) > 0),
+    }
+    return _fingerprint(material)
+
+
 def build_agent_self_snapshot_payload(conn: Any, *, subject_key: str | None, display_name: str | None, project_key: str | None, include_global: bool, limit: int, include_content: bool, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
     identity = resolve_agent_identity(subject_key=subject_key, display_name=display_name, project_key=project_key)
     items, reason_map = _load_candidates(conn, identity, include_global=bool(include_global), row_to_dict=row_to_dict, limit=limit)
@@ -212,8 +226,7 @@ def build_agent_self_snapshot_payload(conn: Any, *, subject_key: str | None, dis
         gaps.append("missing_explicit_identity_evidence")
     if not sections["commitments"]:
         gaps.append("missing_explicit_commitment_evidence")
-    material = {"subject": identity.__dict__, "source_memory_ids": source_ids, "sections": {k: [x["id"] for x in v] for k, v in sections.items()}}
-    return {
+    snapshot_core = {
         "status": "ok",
         "schema": AGENT_SELF_SNAPSHOT_SCHEMA,
         "subject": identity.__dict__,
@@ -221,7 +234,10 @@ def build_agent_self_snapshot_payload(conn: Any, *, subject_key: str | None, dis
         "source_memory_ids": source_ids,
         "source_count": len(source_ids),
         "gap_codes": gaps,
-        "snapshot_fingerprint": _fingerprint(material),
+    }
+    return {
+        **snapshot_core,
+        "snapshot_fingerprint": calculate_agent_self_snapshot_fingerprint(snapshot_core),
         "safety": {"read_only": True, "model_calls_performed": 0, "semantic_similarity_used_as_identity_evidence": False, "project_scoped": True, "include_global": bool(include_global), "content_included": bool(include_content)},
     }
 

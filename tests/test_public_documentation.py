@@ -66,12 +66,13 @@ def test_readme_quickstart_matches_console_entry_points() -> None:
         "mapi-server": "mapi.cli:server",
         "mapi-migrate": "mapi.cli:migrate",
         "mapi-doctor": "mapi.cli:doctor",
+        "mapi-recover": "mapi.cli:recover",
         "mapi-seed-demo": "mapi.cli:seed_demo",
         "mapi-demo": "mapi.cli:demo",
         "mapi-capabilities": "mapi.capabilities:main",
     }
     assert scripts == required
-    for command in ("mapi-migrate", "mapi-seed-demo", "mapi-doctor", "mapi-server", "mapi-demo"):
+    for command in ("mapi-migrate", "mapi-seed-demo", "mapi-doctor", "mapi-recover", "mapi-server", "mapi-demo"):
         assert command in readme
     assert "pip install -e ." in readme
 

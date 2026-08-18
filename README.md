@@ -70,6 +70,7 @@ pip install -e .
 mapi-migrate
 mapi-seed-demo
 mapi-doctor
+mapi-recover
 mapi-server
 ```
 
@@ -82,6 +83,7 @@ pip install -e .
 mapi-migrate
 mapi-seed-demo
 mapi-doctor
+mapi-recover
 mapi-server
 ```
 
@@ -98,6 +100,8 @@ python scripts/smoke_mcp.py
 ```
 
 The smoke uses the safe `agent` profile, writes a fictional record, searches and reads it, checks links and timeline access, and confirms that admin is denied.
+
+Agent Self Model includes deterministic snapshot deltas and a controlled source-bound self narrative. Optional Gemini planning can select only known claim IDs; it cannot write the narrative or invent source IDs.
 
 ## Run the product demo
 

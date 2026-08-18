@@ -23,3 +23,9 @@ The deterministic path is the default. Optional providers are proposal-only and 
 ## Shutdown
 
 Stop the MCP process gracefully so active SQLite transactions can complete. Never copy a live database with ordinary file-copy semantics when writes may be active.
+
+## Doctor and recovery
+
+Run `mapi-doctor` for portable SQLite, repository, backup, network and authentication-boundary diagnostics. `mapi-doctor --deep` also includes retrieval QA.
+
+Run `mapi-recover` for a dry-run recovery plan. Execution is fail-closed: `mapi-recover --execute` requires `MAPI_RECOVERY_COMMAND_JSON` to be a non-empty JSON argv array. MAPI never passes this value through a shell. Recovery refuses to replace a live writer lease.

@@ -140,6 +140,20 @@ WORKSHOP = Workshop(
  'rolled_back_by': 'str', 'notes': 'str|null'},
         ),
         WorkshopAction(
+            action='doctor',
+            tool_name='get_mapi_doctor_report',
+            purpose='Portable read-only database, runtime, backup, network and optional retrieval QA diagnosis.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={'deep': 'bool'},
+        ),
+        WorkshopAction(
+            action='recovery_plan',
+            tool_name='get_mapi_recovery_plan',
+            purpose='Read-only fail-closed recovery plan; execution remains local CLI/operator only.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={},
+        ),
+        WorkshopAction(
             action='transport_status',
             tool_name='get_mcp_transport_status',
             purpose='Read-only HTTP backpressure and keepalive contract with runtime counters.',

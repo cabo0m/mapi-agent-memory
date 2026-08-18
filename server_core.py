@@ -220,12 +220,19 @@ from app.memory.linking import (
     run_memory_linking_pass_payload,
 )
 from app.memory.observability import queue_observability_metrics_payload
+from app.memory.retrieval_baseline import (
+    evaluate_golden_cases,
+    load_retrieval_golden_corpus,
+    materialize_golden_cases,
+)
 from app.memory.agent_gravity import (
     build_agent_gravity_preview,
     build_gravity_context_block,
     build_gravity_shadow_comparison,
     gravity_policy,
 )
+from app.memory.agent_self_delta import build_agent_self_delta_payload
+from app.memory.agent_self_narrative import build_agent_self_narrative_payload
 from app.memory.agent_self_model import (
     build_agent_autobiographical_timeline_payload,
     build_agent_commitment_ledger_payload,
@@ -266,6 +273,8 @@ from app.memory.evidence_relations import (
 from app.memory.canonical_truth_review import build_canonical_truth_review_payload
 from app.memory.legacy_graph_audit import build_legacy_graph_audit_payload
 from app.operations_observability import operations_observability_payload
+from app.runtime.doctor import collect_doctor_report
+from app.runtime.recovery import build_recovery_plan
 from app.memory.reconciliation import (
     preview_memory_capture_reconciliation_payload,
 )
@@ -3076,13 +3085,67 @@ def search_qa_report(
     else:
         failures.append({"case_id": "recent-search-ordering", "query": "recent", "project_key": "demo-project", "reasons": ["recent_ordering_failed"]})
 
+    conn = get_db_connection()
+    try:
+        golden_materialized = materialize_golden_cases(conn, load_retrieval_golden_corpus())
+    finally:
+        conn.close()
+    golden_cases = list(golden_materialized.get("cases") or [])
+    if canonical_requested_keys:
+        golden_cases = [
+            case for case in golden_cases
+            if case.get("expected_project_key") in canonical_requested_keys
+            or case.get("project_key") in requested_keys
+        ]
+    golden = evaluate_golden_cases(
+        golden_cases,
+        lexical_search=find_memories,
+        semantic_search=lambda **_: {"status": "disabled", "results": [], "results_count": 0},
+        latency_runs=1,
+    )
+    golden.update({
+        "schema": golden_materialized.get("schema"),
+        "corpus_id": golden_materialized.get("corpus_id"),
+        "corpus_fingerprint": golden_materialized.get("corpus_fingerprint"),
+        "declared_case_count": golden_materialized.get("case_count"),
+        "skipped_count": golden_materialized.get("skipped_count"),
+        "skipped": golden_materialized.get("skipped") or [],
+    })
+    for item in golden.get("cases") or []:
+        case_results.append({
+            "case_id": "golden:" + str(item.get("case_id")),
+            "project_key": item.get("project_key"),
+            "query": item.get("query"),
+            "resolved_project_key": item.get("expected_project_key") or item.get("project_key"),
+            "selected_strategy": "golden_corpus",
+            "top_memory_ids": list(((item.get("channels") or {}).get("lexical") or {}).get("returned_ids") or []),
+            "status": "passed" if item.get("passed") else "failed",
+            "warnings": [],
+        })
+        if not item.get("passed"):
+            channel_failures: list[str] = []
+            for channel_name, channel in (item.get("channels") or {}).items():
+                if channel.get("passed"):
+                    continue
+                for key in ("missing_expected_ids", "forbidden_returned_ids", "unexpected_ids", "wrong_project_keys"):
+                    if channel.get(key):
+                        channel_failures.append(f"{channel_name}:{key}")
+            failures.append({
+                "case_id": "golden:" + str(item.get("case_id")),
+                "query": item.get("query"),
+                "project_key": item.get("project_key"),
+                "reasons": channel_failures or ["golden_case_failed"],
+            })
+    cases_run = len(case_results)
+    passed_total = sum(1 for item in case_results if item.get("status") == "passed")
     return {
         "status": "ok",
-        "cases_run": len(case_results),
-        "passed": passed,
+        "cases_run": cases_run,
+        "passed": passed_total,
         "warnings": sorted(set(warnings)),
         "failures": failures,
         "case_results": case_results,
+        "golden_corpus": golden,
     }
 
 
@@ -17285,6 +17348,49 @@ def get_agent_self_capsule(
 
 
 @mcp.tool
+def get_agent_self_delta(
+    from_snapshot_json: str,
+    to_snapshot_json: str | None = None,
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Compare an evidence-first self snapshot to another snapshot or current self state."""
+    conn = get_db_connection()
+    try:
+        return build_agent_self_delta_payload(
+            conn, from_snapshot_json=from_snapshot_json, to_snapshot_json=to_snapshot_json,
+            subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), include_debug=bool(include_debug), row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def get_agent_self_narrative(
+    provider: str = "deterministic",
+    subject_key: str | None = None,
+    display_name: str | None = None,
+    project_key: str | None = None,
+    include_global: bool = True,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Render a controlled source-bound self narrative; providers may select claim IDs only."""
+    conn = get_db_connection()
+    try:
+        return build_agent_self_narrative_payload(
+            conn, subject_key=subject_key, display_name=display_name, project_key=project_key,
+            include_global=bool(include_global), provider_name=provider, include_debug=bool(include_debug),
+            row_to_dict=row_to_dict,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
 
 def list_memories_page(
     page_size: int = 20,
@@ -18087,6 +18193,21 @@ def get_mapi_operations_observability(
                 "actual": timeout_budget_ms,
             }
         raise
+
+
+@mcp.tool
+def get_mapi_doctor_report(deep: bool = False) -> dict[str, Any]:
+    """Portable read-only runtime/database/backup/network health report."""
+    return collect_doctor_report(
+        deep=bool(deep),
+        qa_provider=(lambda: search_qa_report(limit_per_case=10)) if deep else None,
+    )
+
+
+@mcp.tool
+def get_mapi_recovery_plan() -> dict[str, Any]:
+    """Read-only recovery plan. Execution is intentionally CLI/operator-only."""
+    return build_recovery_plan(doctor_report=get_mapi_doctor_report(deep=False))
 
 
 @mcp.tool

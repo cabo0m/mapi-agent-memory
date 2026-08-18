@@ -108,6 +108,21 @@ WORKSHOP = Workshop(
             payload_schema={'subject_key': 'str|null', 'display_name': 'str|null', 'project_key': 'str|null', 'include_global': 'bool', 'limit': 'int', 'include_content': 'bool'},
         ),
         WorkshopAction(
+            action='self_delta',
+            tool_name='get_agent_self_delta',
+            purpose='Read-only deterministic comparison of a prior Agent Self Snapshot to another or current snapshot.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={'from_snapshot_json': 'str', 'to_snapshot_json': 'str|null', 'subject_key': 'str|null', 'display_name': 'str|null', 'project_key': 'str|null', 'include_global': 'bool', 'include_debug': 'bool'},
+        ),
+        WorkshopAction(
+            action='self_narrative',
+            tool_name='get_agent_self_narrative',
+            purpose='Controlled source-bound self narrative; optional Gemini may select known claim IDs only.',
+            min_profile='reader', risk='low', risk_class='R0',
+            payload_schema={'provider': 'str', 'subject_key': 'str|null', 'display_name': 'str|null', 'project_key': 'str|null', 'include_global': 'bool', 'include_debug': 'bool'},
+            payload_constraints={'provider': {'enum': ['deterministic', 'gemini']}},
+        ),
+        WorkshopAction(
             action='list_page',
             tool_name='list_memories_page',
             purpose='Stable keyset-paginated memory inventory with field projection and compact responses.',

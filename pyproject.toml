@@ -41,6 +41,7 @@ dev = [
 mapi-server = "mapi.cli:server"
 mapi-migrate = "mapi.cli:migrate"
 mapi-doctor = "mapi.cli:doctor"
+mapi-recover = "mapi.cli:recover"
 mapi-seed-demo = "mapi.cli:seed_demo"
 mapi-demo = "mapi.cli:demo"
 mapi-capabilities = "mapi.capabilities:main"
@@ -59,6 +60,10 @@ py-modules = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*", "mapi*"]
+
+[tool.setuptools.package-data]
+"app.sandman.corpora" = ["*.json"]
+"app.memory.corpora" = ["*.json"]
 
 [tool.ruff]
 target-version = "py311"
