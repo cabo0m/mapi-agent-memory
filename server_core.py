@@ -17554,6 +17554,21 @@ def build_agent_context(
 ) -> dict[str, Any]:
     """Compose bounded, source-linked context from public MAPI read surfaces."""
     restore = bootstrap_agent_context(project_key=project_key, limit=12)
+    self_capsule = get_agent_self_capsule(project_key=None, include_global=True, limit=50, include_content=False)
+    restore = dict(restore)
+    self_identity = list(self_capsule.get("identity") or [])
+    project_core = list(restore.get("core_memories") or [])
+    merged_core: list[dict[str, Any]] = []
+    seen_core_ids: set[int] = set()
+    for raw in [*self_identity, *project_core]:
+        item = dict(raw)
+        memory_id = int(item.get("id") or 0)
+        if memory_id <= 0 or memory_id in seen_core_ids:
+            continue
+        seen_core_ids.add(memory_id)
+        merged_core.append(item)
+    restore["core_memories"] = merged_core
+    restore["core_identity"] = merged_core
     current_project = restore.get("current_project") or {}
     canonical_project_key = (
         normalize_optional_text(current_project.get("project_key"))
@@ -17574,11 +17589,12 @@ def build_agent_context(
     commitment_ledger = get_agent_commitment_ledger(
         project_key=None, include_global=True, limit=100, include_content=False
     )
-    canonical_ids = [
-        int(item.get("id") or 0)
-        for item in retrieval.get("items") or []
-        if int(item.get("id") or 0) > 0
-    ]
+    canonical_ids = sorted({
+        *[int(item.get("id") or 0) for item in retrieval.get("items") or [] if int(item.get("id") or 0) > 0],
+        *[int(value) for value in restore.get("source_memory_ids") or [] if int(value or 0) > 0],
+        *[int(value) for value in self_capsule.get("source_memory_ids") or [] if int(value or 0) > 0],
+        *[int(value) for value in commitment_ledger.get("source_memory_ids") or [] if int(value or 0) > 0],
+    })
     gravity_preview = get_agent_gravity_preview(
         query=intent, project_key=canonical_project_key, limit=8, include_debug=bool(include_debug)
     )
@@ -17602,6 +17618,8 @@ def build_agent_context(
             "retrieval": retrieval.get("debug") or {},
             "bootstrap_policy": restore.get("bootstrap_policy") or {},
             "gravity_preview": gravity_preview.get("debug") or {},
+            "self_capsule_status": self_capsule.get("status"),
+            "commitment_ledger_status": commitment_ledger.get("status"),
             "deferred_channels": [],
         }
     return result

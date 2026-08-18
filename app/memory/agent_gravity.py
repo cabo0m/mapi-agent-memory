@@ -152,7 +152,7 @@ def _query_overlap(item: Mapping[str, Any], query_tokens: set[str]) -> float:
 def _candidate_lane(*, score: float, trigger: float, explicit: bool, role_score: float) -> str | None:
     if explicit or trigger >= 0.75:
         return "required"
-    if score >= 0.62 or (role_score >= 0.85 and score >= 0.50):
+    if score >= 0.62 or (role_score >= 0.85 and score >= 0.45):
         return "strong"
     if score >= 0.40:
         return "contextual"

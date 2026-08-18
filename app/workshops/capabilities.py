@@ -39,6 +39,8 @@ def build_mapi_capabilities_payload(*, runtime_readiness: Mapping[str, Any]) -> 
             "partial_report_sections": True,
             "report_timeout_budgets": True,
             "session_100_call_gate": True,
+            "agent_self_model": True,
+            "source_bound_gravity": True,
         },
         "contracts": {
             "memory.find.sort_by": {
@@ -107,6 +109,29 @@ def build_mapi_capabilities_payload(*, runtime_readiness: Mapping[str, Any]) -> 
                 "public_tunnel_responses": 100,
                 "public_tunnel_upstream_errors": 0,
                 "public_tunnel_passed": True,
+            },
+            "agent.self_model": {
+                "snapshot_schema": "mapi_agent_self_snapshot.v1",
+                "commitment_ledger_schema": "mapi_agent_commitment_ledger.v1",
+                "autobiographical_timeline_schema": "mapi_agent_autobiographical_timeline.v1",
+                "capsule_schema": "mapi_agent_self_capsule.v1",
+                "read_only": True,
+                "source_linked": True,
+                "semantic_similarity_used_as_identity_evidence": False,
+                "ordinary_project_notes_auto_promoted_to_identity": False,
+            },
+            "retrieval.gravity": {
+                "preview_schema": "mapi_agent_gravity_preview.v1",
+                "context_schema": "mapi_agent_gravity_context.v1",
+                "shadow_schema": "mapi_agent_gravity_shadow.v1",
+                "lanes": ["required", "strong", "contextual"],
+                "max_candidates": 50,
+                "max_results": 12,
+                "max_context_injections": 2,
+                "durable_relation_writes": False,
+                "importance_mutation": False,
+                "recall_mutation": False,
+                "foreign_project_candidates_excluded": True,
             },
             "graph.canonical_truth_review": {
                 "schema": "mapi_canonical_truth_review.v1",

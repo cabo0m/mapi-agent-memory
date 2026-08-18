@@ -11,6 +11,9 @@ The authoritative neutral template is [`.env.example`](../.env.example). The cor
 | `MCP_SURFACE_PROFILE` | `agent` | no | Higher profiles expose more mutations |
 | `MAPI_ADMIN_TOOLS_ENABLED` | `false` | no | Must be true before `admin` is effective |
 | `MAPI_OWNER_KEY` | `owner` | no | Single-instance identity namespace |
+| `MAPI_AGENT_SUBJECT_KEY` | `agent` | no | Stable subject key for Agent Self Model |
+| `MAPI_AGENT_DISPLAY_NAME` | `Agent` | no | Display label only; not authorization |
+| `MAPI_AGENT_PROJECT_KEY` | `agent-self` | no | Dedicated self-evidence namespace; keep separate from customer projects |
 | `MAPI_SEMANTIC_ENABLED` | `false` | no | May trigger optional model use |
 | `MAPI_EMBEDDING_MODEL` | MiniLM example | no | First use may download model files |
 | `GEMINI_API_KEY` | empty | no | Secret; never commit |
@@ -26,3 +29,9 @@ Environment variables are process configuration, not authorization. A payload fi
 ## Remote authentication status
 
 The runtime contains remote-auth integration points, but remote authentication is not part of the local quickstart and is classified as experimental in this public candidate. A supported remote deployment still requires a complete external identity and TLS boundary, tested token handling, restricted profile mapping and an unreachable admin surface. No private owner values, redirect URIs, endpoints or provider configuration are required or included.
+
+## Agent Self Model
+
+`MAPI_AGENT_SUBJECT_KEY`, `MAPI_AGENT_DISPLAY_NAME` and `MAPI_AGENT_PROJECT_KEY` configure the neutral, read-only self-model surfaces. The self-model is evidence-first: ordinary project notes are not promoted into identity merely because their text sounds personal. Explicit self evidence should live in the dedicated self project and use identity/autobiographical layers or explicit subject/self-model tags.
+
+The self-model can feed Context Engine and source-bound Gravity. Those readers never create durable truth, relations, importance changes or recall changes on their own.

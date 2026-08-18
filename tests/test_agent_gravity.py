@@ -62,3 +62,47 @@ def test_shadow_preserves_canonical_top_and_reports_injection():
     assert result["canonical"]["source_memory_ids"] == [1, 2, 3]
     assert result["shadow"]["augmented_preview"]["source_memory_ids"] == [1, 4, 5, 2, 3]
     assert result["safety"]["canonical_baseline_preserved"] is True
+
+
+def test_server_gravity_uses_neutral_self_sources(server, memory_factory, monkeypatch):
+    monkeypatch.setenv("MAPI_AGENT_SUBJECT_KEY", "alpha")
+    monkeypatch.setenv("MAPI_AGENT_PROJECT_KEY", "alpha-self")
+    guardrail = memory_factory(
+        content="Review before mutation", summary_short="Review before mutation", memory_type="guardrail", source="pytest",
+        importance_score=0.9, confidence_score=1.0, tags="agent-self,subject:alpha,guardrail,safety",
+        layer_code="core", area_code="meta", state_code="validated", scope_code="project", identity_weight=0.9,
+        project_key="alpha-self", entry_type="decision", truth_kind="decision",
+    )
+    result = server.get_agent_gravity_preview(query="review mutation", project_key="demo-project", limit=8, include_debug=True)
+    item = next(entry for entry in result["attractors"] if int(entry["memory_id"]) == guardrail)
+    assert item["lane"] in {"required", "strong"}
+    assert "self_model_source" in item["reason_codes"]
+    assert "commitment_ledger" in item["source_kinds"]
+
+
+def test_agent_context_includes_self_identity_and_commitment_without_gravity_duplicate(server, memory_factory, monkeypatch):
+    monkeypatch.setenv("MAPI_AGENT_SUBJECT_KEY", "alpha")
+    monkeypatch.setenv("MAPI_AGENT_PROJECT_KEY", "alpha-self")
+    identity = memory_factory(
+        content="Alpha is a careful agent", summary_short="Alpha is a careful agent", memory_type="identity", source="pytest",
+        importance_score=0.95, confidence_score=1.0, tags="agent-self,subject:alpha", layer_code="identity", area_code="identity",
+        state_code="validated", scope_code="project", identity_weight=1.0, project_key="alpha-self", entry_type="user_profile", truth_kind="fact",
+    )
+    guardrail = memory_factory(
+        content="Review before mutation", summary_short="Review before mutation", memory_type="guardrail", source="pytest",
+        importance_score=0.9, confidence_score=1.0, tags="agent-self,subject:alpha,guardrail,safety", layer_code="core", area_code="meta",
+        state_code="validated", scope_code="project", identity_weight=0.9, project_key="alpha-self", entry_type="decision", truth_kind="decision",
+    )
+    memory_factory(
+        content="Demo project mutation plan", summary_short="Demo project mutation plan", memory_type="project_note", source="pytest",
+        importance_score=0.8, confidence_score=1.0, tags="demo", layer_code="projects", area_code="projects", state_code="validated",
+        scope_code="project", project_key="demo-project", entry_type="project", truth_kind="fact",
+    )
+    result = server.build_agent_context(intent="review mutation plan", project_key="demo-project", token_budget=4000, include_debug=True)
+    identity_sources = {sid for item in result["sections"]["identity"] for sid in item["source_memory_ids"]}
+    commitment_sources = {sid for item in result["sections"]["commitments_guardrails"] for sid in item["source_memory_ids"]}
+    gravity_sources = {sid for item in result["sections"]["gravity"] for sid in item["source_memory_ids"]}
+    assert identity in identity_sources
+    assert guardrail in commitment_sources
+    assert guardrail not in gravity_sources
+    assert result["debug"]["deferred_channels"] == []
