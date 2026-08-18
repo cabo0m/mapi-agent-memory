@@ -71,6 +71,22 @@ def validate_workshop_payload(handler: Any, action: Any, payload: dict[str, Any]
     return errors
 
 
+def validate_workshop_constraints(action: Any, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for field, constraint in dict(getattr(action, "payload_constraints", None) or {}).items():
+        if field not in payload or payload[field] is None:
+            continue
+        allowed_values = constraint.get("enum")
+        if allowed_values is not None and payload[field] not in allowed_values:
+            errors.append({
+                "field": field,
+                "code": "invalid_enum_value",
+                "actual": payload[field],
+                "allowed_values": list(allowed_values),
+            })
+    return errors
+
+
 def run_workshop_action_payload(
     *,
     area: str,
@@ -154,6 +170,7 @@ def run_workshop_action_payload(
     if handler is None or not callable(handler):
         return {"status": "error", "error": "handler_not_found", "tool_name": resolved.tool_name}
     validation_errors = validate_workshop_payload(handler, resolved, call_payload)
+    validation_errors.extend(validate_workshop_constraints(resolved, call_payload))
     if validation_errors:
         return {
             "status": "error",
@@ -162,7 +179,9 @@ def run_workshop_action_payload(
             "action": resolved.action,
             "tool_name": resolved.tool_name,
             "payload_schema": resolved.payload_schema or {},
+            "payload_constraints": resolved.payload_constraints or {},
             "validation_errors": validation_errors,
+            "details": validation_errors,
         }
     should_audit_execution = resolved.risk_class == "R3"
     operation_audit_path = security_audit_path() if should_audit_execution else None

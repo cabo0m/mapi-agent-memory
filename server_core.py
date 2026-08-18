@@ -224,6 +224,20 @@ from app.memory.project_keys import (
     project_key_filter_values,
     upsert_project_key_alias_payload,
 )
+from app.memory.project_keys import resolve_canonical_project_key
+from app.memory.relation_contracts import (
+    CANONICAL_MEMORY_RELATIONS,
+    get_relation_contracts_payload,
+    normalize_relation,
+    preview_relation_payload,
+)
+from app.memory.evidence_relations import (
+    EVIDENCE_BOUND_RELATIONS,
+    apply_evidence_relation_payload,
+    preview_evidence_relation_payload,
+    preview_evidence_relation_rollback_payload,
+    rollback_evidence_relation_payload,
+)
 from app.memory.reconciliation import (
     preview_memory_capture_reconciliation_payload,
 )
@@ -11417,7 +11431,14 @@ def list_overdue_duplicate_queue(
 
 
 @mcp.tool
-def link_memories(from_memory_id: int, to_memory_id: int, relation_type: str, weight: float = 0.5, origin: str | None = None) -> dict[str, Any]:
+def link_memories(
+    from_memory_id: int,
+    to_memory_id: int,
+    relation_type: str,
+    weight: float = 0.5,
+    origin: str | None = None,
+    allow_legacy_unsafe: bool = False,
+) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         return link_memories_payload(
@@ -11427,6 +11448,7 @@ def link_memories(from_memory_id: int, to_memory_id: int, relation_type: str, we
             relation_type=relation_type,
             weight=weight,
             origin=origin,
+            allow_legacy_unsafe=bool(allow_legacy_unsafe),
             new_operation_id=timeline.new_operation_id,
             create_link=_create_link,
         )
@@ -13083,8 +13105,13 @@ def preview_conflict_resolution(memory_a_id: int, memory_b_id: int) -> dict[str,
         conn.close()
 
 
-@mcp.tool
-def apply_conflict_resolution(memory_a_id: int, memory_b_id: int, notes: str | None = None) -> dict[str, Any]:
+def _apply_conflict_resolution_impl(
+    memory_a_id: int,
+    memory_b_id: int,
+    notes: str | None = None,
+    *,
+    allow_legacy_unsafe_canonical_links: bool,
+) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         if not _is_conflict_feature_active(conn, CONFLICT_AUTO_RESOLUTION_FLAG_KEY):
@@ -13099,7 +13126,12 @@ def apply_conflict_resolution(memory_a_id: int, memory_b_id: int, notes: str | N
                 "run_id": None,
             }
         run_id = create_sleep_run(conn, mode="conflict_resolution_run", freedom_level=0, notes=notes)
-        result = conflict_explainer.apply_resolution(conn, int(memory_a_id), int(memory_b_id))
+        result = conflict_explainer.apply_resolution(
+            conn,
+            int(memory_a_id),
+            int(memory_b_id),
+            allow_legacy_unsafe_canonical_links=bool(allow_legacy_unsafe_canonical_links),
+        )
 
         if result["status"] == "skipped":
             finalize_sleep_run(conn, run_id, status="skipped", scanned_count=2, changed_count=0, archived_count=0, downgraded_count=0, duplicate_count=0, conflict_count=1, created_summary_count=0)
@@ -13152,6 +13184,33 @@ def apply_conflict_resolution(memory_a_id: int, memory_b_id: int, notes: str | N
         return {**result, "run_id": run_id}
     finally:
         conn.close()
+
+
+@mcp.tool
+def apply_conflict_resolution(memory_a_id: int, memory_b_id: int, notes: str | None = None) -> dict[str, Any]:
+    """Apply only non-canonical auto resolutions; canonical truth links require guarded routes."""
+    return _apply_conflict_resolution_impl(
+        int(memory_a_id),
+        int(memory_b_id),
+        notes=notes,
+        allow_legacy_unsafe_canonical_links=False,
+    )
+
+
+def apply_conflict_resolution_legacy_unsafe(
+    memory_a_id: int,
+    memory_b_id: int,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Compatibility/forensics helper for historical tests; not registered as an MCP tool."""
+    return _apply_conflict_resolution_impl(
+        int(memory_a_id),
+        int(memory_b_id),
+        notes=notes,
+        allow_legacy_unsafe_canonical_links=True,
+    )
+
+
 
 
 _CONFLICT_LINK_TYPES = {"contradicts", "supersedes", "relates_to"}
@@ -13723,7 +13782,13 @@ def get_conflict_report(memory_a_id: int, memory_b_id: int) -> dict[str, Any]:
     # Decision summary
     auto_applicable = bool(preview.get("can_auto_apply"))
     needs_review = bool(explanation.get("needs_human_review"))
-    if auto_applicable:
+    if preview.get("skip_reason") == "canonical_relation_requires_guarded_route":
+        recommended_action = (
+            "guarded_supersession_required"
+            if explanation.get("suggested_relation") == "supersedes"
+            else "guarded_relation_review_required"
+        )
+    elif auto_applicable:
         recommended_action = "apply_conflict_resolution"
     elif needs_review:
         recommended_action = "manual_review_required"
@@ -13743,6 +13808,7 @@ def get_conflict_report(memory_a_id: int, memory_b_id: int) -> dict[str, Any]:
             "can_auto_apply": auto_applicable,
             "skip_reason": preview.get("skip_reason"),
             "proposed_changes": preview.get("proposed_changes", []),
+            "canonical_guarded_routes": preview.get("canonical_guarded_routes", {}),
             "proposed_changes_count": len(preview.get("proposed_changes", [])),
         },
         "history": {
@@ -13861,6 +13927,21 @@ def preview_conflicts_v1(notes: str | None = None) -> dict[str, Any]:
 
 @mcp.tool
 def run_conflicts_v1(notes: str | None = None) -> dict[str, Any]:
+    """Retired legacy heuristic conflict writer; canonical contradictions require review/evidence."""
+    return {
+        "status": "blocked",
+        "schema": "legacy_conflicts_v1_retirement.v1",
+        "reason": "legacy_conflicts_v1_retired",
+        "links_created": [],
+        "flagged_changes": [],
+        "run_id": None,
+        "canonical_route": "memory.capture_reconciliation -> conflict_review -> open_unresolved_conflict_review",
+        "legacy_forensics_helper": "run_conflicts_v1_legacy_unsafe",
+        "safety": {"mutations_performed": 0, "semantic_heuristic_truth_write_allowed": False},
+    }
+
+
+def run_conflicts_v1_legacy_unsafe(notes: str | None = None) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         run_id = create_sleep_run(conn, mode="conflict_run", freedom_level=0, notes=notes)
@@ -17407,6 +17488,184 @@ def preview_memory_steward_nightly(
         consolidation_queue=consolidation_queue,
         candidate_limit=int(candidate_limit),
     )
+
+
+@mcp.tool
+def get_memory_relation_contracts(relation: str | None = None) -> dict[str, Any]:
+    """Return the canonical evidence-bound memory relation policy."""
+    return get_relation_contracts_payload(relation=relation)
+
+
+@mcp.tool
+def preview_memory_relation(
+    relation: str,
+    from_memory_id: int | None = None,
+    to_memory_id: int | None = None,
+    project_key: str | None = None,
+    evidence_kind: str | None = None,
+    evidence_ref: str | None = None,
+    reason: str | None = None,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Read-only evidence preview for one canonical memory relation."""
+    requested_project_key = normalize_optional_text(project_key)
+    canonical_project_key = requested_project_key
+    normalized_relation = normalize_relation(relation)
+    conn = get_db_connection()
+    try:
+        if requested_project_key is not None:
+            canonical_project_key = resolve_canonical_project_key(
+                conn,
+                requested_project_key,
+                normalize_optional_text=normalize_optional_text,
+            )
+        if normalized_relation in EVIDENCE_BOUND_RELATIONS:
+            if from_memory_id is None or to_memory_id is None:
+                result = {
+                    "status": "blocked",
+                    "schema": "memory_v3_evidence_relation_preview.v1",
+                    "relation": normalized_relation,
+                    "blocking_reasons": ["from_and_to_memory_id_required"],
+                    "safety": {
+                        "read_only": True,
+                        "mutations_performed": 0,
+                        "apply_supported": False,
+                    },
+                }
+            else:
+                result = preview_evidence_relation_payload(
+                    conn,
+                    relation=normalized_relation,
+                    from_memory_id=int(from_memory_id),
+                    to_memory_id=int(to_memory_id),
+                    evidence_kind=evidence_kind,
+                    evidence_ref=evidence_ref,
+                    reason=reason,
+                    project_key=canonical_project_key,
+                    include_debug=bool(include_debug),
+                    row_to_dict=row_to_dict,
+                    canonical_json_hash=_canonical_json_hash,
+                )
+            contract_payload = get_relation_contracts_payload(relation=normalized_relation)
+            if contract_payload.get("relations"):
+                result["contract"] = contract_payload["relations"][0]
+            result["apply"] = {
+                "supported_directly_here": True,
+                "route": "memory.relation_apply",
+                "eligible": bool((result.get("safety") or {}).get("apply_supported")),
+                "blocking_reasons": list(result.get("blocking_reasons") or []),
+            }
+        else:
+            result = preview_relation_payload(
+                conn,
+                relation=relation,
+                from_memory_id=from_memory_id,
+                to_memory_id=to_memory_id,
+                project_key=canonical_project_key,
+                normalize_optional_text=normalize_optional_text,
+                row_to_dict=row_to_dict,
+            )
+    finally:
+        conn.close()
+    result["requested_project_key"] = requested_project_key
+    result["canonical_project_key"] = canonical_project_key
+    return result
+
+
+@mcp.tool
+def apply_memory_relation(
+    relation: str,
+    from_memory_id: int,
+    to_memory_id: int,
+    evidence_kind: str,
+    evidence_ref: str,
+    reason: str,
+    expected_preview_hash: str,
+    applied_by: str,
+    confirm_evidence_bound_relation: bool,
+    project_key: str | None = None,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Apply supports/derived_from only through an evidence-bound guarded contract."""
+    requested_project_key = normalize_optional_text(project_key)
+    canonical_project_key = requested_project_key
+    conn = get_db_connection()
+    try:
+        if requested_project_key is not None:
+            canonical_project_key = resolve_canonical_project_key(
+                conn,
+                requested_project_key,
+                normalize_optional_text=normalize_optional_text,
+            )
+        result = apply_evidence_relation_payload(
+            conn,
+            relation=relation,
+            from_memory_id=int(from_memory_id),
+            to_memory_id=int(to_memory_id),
+            evidence_kind=evidence_kind,
+            evidence_ref=evidence_ref,
+            reason=reason,
+            expected_preview_hash=expected_preview_hash,
+            applied_by=applied_by,
+            confirm_evidence_bound_relation=bool(confirm_evidence_bound_relation),
+            project_key=canonical_project_key,
+            include_debug=bool(include_debug),
+            row_to_dict=row_to_dict,
+            canonical_json_hash=_canonical_json_hash,
+            utc_now_iso=utc_now_iso,
+            insert_memory_event=insert_memory_event,
+        )
+    finally:
+        conn.close()
+    result["requested_project_key"] = requested_project_key
+    result["canonical_project_key"] = canonical_project_key
+    return result
+
+
+@mcp.tool
+def preview_memory_relation_rollback(
+    link_id: int,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Preview rollback for a link created by evidence-bound supports/derived_from apply."""
+    conn = get_db_connection()
+    try:
+        return preview_evidence_relation_rollback_payload(
+            conn,
+            link_id=int(link_id),
+            include_debug=bool(include_debug),
+            row_to_dict=row_to_dict,
+            canonical_json_hash=_canonical_json_hash,
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def rollback_memory_relation(
+    link_id: int,
+    expected_rollback_preview_hash: str,
+    rolled_back_by: str,
+    notes: str | None = None,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Archive one materialized evidence-bound edge while preserving append-only audit evidence."""
+    conn = get_db_connection()
+    try:
+        return rollback_evidence_relation_payload(
+            conn,
+            link_id=int(link_id),
+            expected_rollback_preview_hash=expected_rollback_preview_hash,
+            rolled_back_by=rolled_back_by,
+            notes=notes,
+            include_debug=bool(include_debug),
+            row_to_dict=row_to_dict,
+            canonical_json_hash=_canonical_json_hash,
+            utc_now_iso=utc_now_iso,
+            insert_memory_event=insert_memory_event,
+        )
+    finally:
+        conn.close()
 
 
 @mcp.tool

@@ -29,7 +29,7 @@ def test_build_minimal_conflict_context_returns_memories_and_direct_contradictio
         tags="agent,api,konflikt",
         valid_to="2026-04-21T10:00:00Z",
     )
-    server.link_memories(memory_a_id, memory_b_id, "contradicts", 1.0, "pytest")
+    server.link_memories(memory_a_id, memory_b_id, "contradicts", 1.0, "pytest", allow_legacy_unsafe=True)
 
     conn = server.get_db_connection()
     try:
@@ -69,7 +69,7 @@ def test_build_minimal_conflict_context_is_deterministic_for_reversed_input(serv
         importance_score=0.72,
         confidence_score=0.82,
     )
-    server.link_memories(higher_id, lower_id, "contradicts", 0.9, "pytest")
+    server.link_memories(higher_id, lower_id, "contradicts", 0.9, "pytest", allow_legacy_unsafe=True)
 
     conn = server.get_db_connection()
     try:
@@ -247,8 +247,8 @@ def test_build_conflict_clusters_two_separate_pairs(server: Any, memory_factory)
     c = memory_factory(content="Baza to Postgres.", memory_type="fact", summary_short="baza", source="pytest")
     d = memory_factory(content="Baza to SQLite.", memory_type="fact", summary_short="baza", source="pytest")
 
-    server.link_memories(a, b, "contradicts", 1.0, "pytest")
-    server.link_memories(c, d, "supersedes", 1.0, "pytest")
+    server.link_memories(a, b, "contradicts", 1.0, "pytest", allow_legacy_unsafe=True)
+    server.link_memories(c, d, "supersedes", 1.0, "pytest", allow_legacy_unsafe=True)
 
     conn = server.get_db_connection()
     try:
@@ -269,8 +269,8 @@ def test_build_conflict_clusters_merged_by_shared_node(server: Any, memory_facto
     b = memory_factory(content="System X używa cache B.", memory_type="fact", summary_short="system x cache", source="pytest")
     c = memory_factory(content="System X używa cache C.", memory_type="fact", summary_short="system x cache", source="pytest")
 
-    server.link_memories(a, b, "contradicts", 1.0, "pytest")
-    server.link_memories(a, c, "contradicts", 1.0, "pytest")
+    server.link_memories(a, b, "contradicts", 1.0, "pytest", allow_legacy_unsafe=True)
+    server.link_memories(a, c, "contradicts", 1.0, "pytest", allow_legacy_unsafe=True)
 
     conn = server.get_db_connection()
     try:
@@ -293,7 +293,7 @@ def test_build_conflict_clusters_isolated_memory_not_in_clusters(server: Any, me
     b = memory_factory(content="Moduł X nie działa.", memory_type="fact", summary_short="moduł x status", source="pytest")
     isolated = memory_factory(content="Niezwiązana notatka.", memory_type="fact", summary_short="inne", source="pytest")
 
-    server.link_memories(a, b, "contradicts", 1.0, "pytest")
+    server.link_memories(a, b, "contradicts", 1.0, "pytest", allow_legacy_unsafe=True)
 
     conn = server.get_db_connection()
     try:
@@ -311,7 +311,7 @@ def test_build_conflict_clusters_has_unresolved_flag(server: Any, memory_factory
     # Use content with a negation pair so run_conflicts_v1 sets contradiction_flag
     a = memory_factory(content="Moduł deployment działa.", memory_type="fact", summary_short="status deployment", source="pytest")
     b = memory_factory(content="Moduł deployment nie działa.", memory_type="fact", summary_short="status deployment", source="pytest")
-    server.run_conflicts_v1()
+    server.run_conflicts_v1_legacy_unsafe()
 
     conn = server.get_db_connection()
     try:

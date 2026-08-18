@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+CANONICAL_TRUTH_RELATIONS = frozenset({"supports", "contradicts", "supersedes", "refines", "derived_from"})
+
+
 def link_memories_payload(
     conn: Any,
     *,
@@ -13,11 +16,21 @@ def link_memories_payload(
     relation_type: str,
     weight: float = 0.5,
     origin: str | None = None,
+    allow_legacy_unsafe: bool = False,
     new_operation_id: Callable[[str], str],
     create_link: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
     if not relation_type or not relation_type.strip():
         return {"status": "error", "error": "relation_type nie moĹĽe byÄ‡ puste"}
+    normalized_relation = relation_type.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized_relation in CANONICAL_TRUTH_RELATIONS and not bool(allow_legacy_unsafe):
+        return {
+            "status": "blocked",
+            "error": "canonical_relation_requires_evidence_bound_route",
+            "relation_type": normalized_relation,
+            "canonical_route": "memory.relation_preview/relation_apply or dedicated lifecycle/review route",
+            "legacy_unsafe_available": True,
+        }
     if conn.execute("SELECT id FROM memories WHERE id = ?", (from_memory_id,)).fetchone() is None:
         return {"status": "error", "error": "Jedno lub oba wspomnienia nie istniejÄ…"}
     if conn.execute("SELECT id FROM memories WHERE id = ?", (to_memory_id,)).fetchone() is None:

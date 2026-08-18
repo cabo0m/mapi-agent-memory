@@ -16,6 +16,9 @@ _CONFLICT_KINDS = frozenset({
     "unresolved_real_conflict",
 })
 
+_CANONICAL_TRUTH_RELATIONS = frozenset({"supports", "contradicts", "supersedes", "refines", "derived_from"})
+
+
 _SUGGESTED_RELATIONS: dict[str, str] = {
     "temporal_conflict": "supersedes",
     "scope_conflict": "relates_to",
@@ -562,6 +565,8 @@ def preview_resolution(
     conn: sqlite3.Connection,
     memory_a_id: int,
     memory_b_id: int,
+    *,
+    allow_legacy_unsafe_canonical_links: bool = False,
 ) -> dict[str, Any]:
     explanation = explain_conflict_pair(conn, int(memory_a_id), int(memory_b_id))
     conflict_kind = str(explanation["conflict_kind"])
@@ -574,6 +579,15 @@ def preview_resolution(
 
     proposed_changes = build_proposed_changes(conn, conflict_kind, confidence, left, right)
     reason = skip_reason(conflict_kind, confidence, proposed_changes)
+    canonical_link_changes = [
+        change
+        for change in proposed_changes
+        if change.get("action") == "create_link"
+        and str(change.get("relation_type") or "") in _CANONICAL_TRUTH_RELATIONS
+        and not bool(change.get("already_exists"))
+    ]
+    if reason is None and canonical_link_changes and not bool(allow_legacy_unsafe_canonical_links):
+        reason = "canonical_relation_requires_guarded_route"
     can_auto_apply = reason is None
 
     return {
@@ -586,6 +600,12 @@ def preview_resolution(
         "skip_reason": reason,
         "explanation_summary": explanation["explanation"],
         "needs_human_review": explanation["needs_human_review"],
+        "canonical_truth_link_changes": canonical_link_changes,
+        "canonical_guarded_routes": {
+            "supersedes": "memory.supersession_preview/supersession_apply",
+            "contradicts": "memory.capture_reconciliation -> conflict_review",
+        },
+        "legacy_unsafe_canonical_links_allowed": bool(allow_legacy_unsafe_canonical_links),
     }
 
 
@@ -593,13 +613,20 @@ def apply_resolution(
     conn: sqlite3.Connection,
     memory_a_id: int,
     memory_b_id: int,
+    *,
+    allow_legacy_unsafe_canonical_links: bool = False,
 ) -> dict[str, Any]:
     """Apply proposed conflict resolution changes. Returns applied_changes list and metadata.
 
     Only applies if can_auto_apply is True. Does NOT commit — caller handles transaction.
     Returns status='skipped' with skip_reason when auto-apply is blocked.
     """
-    preview = preview_resolution(conn, int(memory_a_id), int(memory_b_id))
+    preview = preview_resolution(
+        conn,
+        int(memory_a_id),
+        int(memory_b_id),
+        allow_legacy_unsafe_canonical_links=bool(allow_legacy_unsafe_canonical_links),
+    )
     if not preview["can_auto_apply"]:
         return {
             "status": "skipped",

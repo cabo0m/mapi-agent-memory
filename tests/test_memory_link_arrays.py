@@ -51,7 +51,7 @@ def test_get_memory_returns_merged_link_arrays(server: Any) -> None:
 def test_get_memory_links_uses_same_shape(server: Any) -> None:
     left_id = _create_test_memory(server, "get-memory-links-left")
     right_id = _create_test_memory(server, "get-memory-links-right")
-    link = server.link_memories(left_id, right_id, "supports", 0.81, "pytest")["link"]
+    link = server.link_memories(left_id, right_id, "supports", 0.81, "pytest", allow_legacy_unsafe=True)["link"]
 
     result = server.get_memory_links(left_id)
 

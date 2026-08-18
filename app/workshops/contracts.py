@@ -14,6 +14,7 @@ class WorkshopAction:
     risk_class: str = "R0"
     backup_required: bool = False
     payload_schema: dict[str, Any] | None = None
+    payload_constraints: dict[str, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)

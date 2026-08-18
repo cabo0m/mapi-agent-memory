@@ -308,8 +308,10 @@ def test_preview_resolution_temporal_proposes_supersedes() -> None:
     link_changes = [c for c in result["proposed_changes"] if c["action"] == "create_link"]
     assert len(link_changes) >= 1
     assert link_changes[0]["relation_type"] == "supersedes"
-    assert result["can_auto_apply"] is True
-    assert result["skip_reason"] is None
+    assert result["can_auto_apply"] is False
+    assert result["skip_reason"] == "canonical_relation_requires_guarded_route"
+    assert result["canonical_truth_link_changes"][0]["relation_type"] == "supersedes"
+    assert result["canonical_guarded_routes"]["supersedes"] == "memory.supersession_preview/supersession_apply"
 
 
 @pytest.mark.regression
@@ -414,7 +416,7 @@ def test_apply_resolution_temporal_creates_link_and_sets_valid_to() -> None:
         conn, content="Cache włączony.", summary_short="cache",
         created_at="2026-01-01T00:00:00Z",
     )
-    result = conflict_explainer.apply_resolution(conn, older, newer)
+    result = conflict_explainer.apply_resolution(conn, older, newer, allow_legacy_unsafe_canonical_links=True)
     conn.commit()
 
     assert result["status"] == "applied"
@@ -445,7 +447,7 @@ def test_apply_resolution_sets_valid_to_on_older_without_it() -> None:
         created_at="2026-01-01T00:00:00Z",
         valid_from="2026-01-01T00:00:00Z",
     )
-    result = conflict_explainer.apply_resolution(conn, older, newer)
+    result = conflict_explainer.apply_resolution(conn, older, newer, allow_legacy_unsafe_canonical_links=True)
     conn.commit()
 
     assert result["status"] == "applied"
@@ -485,12 +487,12 @@ def test_apply_resolution_idempotent_when_link_already_exists() -> None:
         created_at="2026-01-01T00:00:00Z",
     )
     # Apply once
-    conflict_explainer.apply_resolution(conn, older, newer)
+    conflict_explainer.apply_resolution(conn, older, newer, allow_legacy_unsafe_canonical_links=True)
     conn.commit()
     links_after_first = conn.execute("SELECT COUNT(*) AS c FROM memory_links").fetchone()["c"]
 
     # Apply again — should be skipped because link already exists
-    result2 = conflict_explainer.apply_resolution(conn, older, newer)
+    result2 = conflict_explainer.apply_resolution(conn, older, newer, allow_legacy_unsafe_canonical_links=True)
     assert result2["status"] == "skipped"
     assert result2["skip_reason"] == "link_already_exists"
     links_after_second = conn.execute("SELECT COUNT(*) AS c FROM memory_links").fetchone()["c"]

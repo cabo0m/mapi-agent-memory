@@ -23,6 +23,11 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `compare_modes` | Compare modes. | `compare_memory_modes` | `reader` | `R0` | read | no | no | no | no |
 | `forgetting_review` | Forgetting review. | `get_memory_forgetting_review` | `reader` | `R0` | read | no | no | no | no |
 | `health_report` | Health report. | `get_memory_health_report` | `reader` | `R0` | read | no | no | no | no |
+| `relation_contracts` | Relation contracts. | `get_memory_relation_contracts` | `reader` | `R0` | read | no | no | no | no |
+| `relation_preview` | Relation preview. | `preview_memory_relation` | `reader` | `R0` | read | no | no | no | no |
+| `relation_apply` | Relation apply. | `apply_memory_relation` | `maintainer` | `R2` | write | no | yes | no | no |
+| `relation_rollback_preview` | Relation rollback preview. | `preview_memory_relation_rollback` | `reader` | `R0` | read | no | no | no | no |
+| `relation_rollback` | Relation rollback. | `rollback_memory_relation` | `maintainer` | `R2` | write | no | yes | no | no |
 | `current_state` | Current state. | `get_memory_current_state` | `reader` | `R0` | read | no | no | no | no |
 | `current_state_inventory` | Current state inventory. | `get_memory_current_state_inventory` | `reader` | `R0` | read | no | no | no | no |
 | `lifecycle_integrity` | Lifecycle integrity. | `get_memory_lifecycle_integrity_report` | `reader` | `R0` | read | no | no | no | no |

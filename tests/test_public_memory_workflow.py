@@ -26,7 +26,7 @@ def test_agent_can_save_search_read_and_link(server: Any, monkeypatch: Any) -> N
     linked = server.link_memories(
         from_memory_id=int(first["memory_id"]),
         to_memory_id=int(second["memory_id"]),
-        relation_type="supports",
+        relation_type="related_to",
         weight=0.8,
         origin="public-test",
     )

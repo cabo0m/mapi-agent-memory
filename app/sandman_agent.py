@@ -383,6 +383,9 @@ def _tool_archive_memory(conn: sqlite3.Connection, memory_id: int, reason: str) 
     return {"status": "archived", "memory_id": memory_id, "archived_at": now, "reason": reason}
 
 
+_EVIDENCE_BOUND_TRUTH_RELATIONS = frozenset({"supports", "contradicts", "supersedes", "refines", "derived_from"})
+
+
 def _tool_link_memories(
     conn: sqlite3.Connection,
     from_memory_id: int,
@@ -397,12 +400,20 @@ def _tool_link_memories(
     relation_aliases = {"relates_to": "related_to"}
     relation_type = relation_aliases.get(relation_type, relation_type)
 
+    if relation_type in _EVIDENCE_BOUND_TRUTH_RELATIONS:
+        return {
+            "status": "blocked",
+            "reason": "canonical_relation_requires_evidence_bound_route",
+            "relation_type": relation_type,
+            "allowed_direct_relations": [
+                "duplicate_of", "related_to", "context_for", "clarifies", "documents",
+                "implements", "configures", "validates", "risk_for", "metric_for", "same_project"
+            ],
+        }
+
     weight = min(1.0, max(0.0, float(weight or 0.8)))
 
     allowed = {
-        "supports",
-        "contradicts",
-        "supersedes",
         "duplicate_of",
         "related_to",
         "context_for",

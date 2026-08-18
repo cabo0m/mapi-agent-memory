@@ -76,6 +76,8 @@ MAINTENANCE_TOOLS = frozenset(
         "rollback_memory_consolidation_apply_run",
         "apply_memory_supersession",
         "rollback_memory_supersession_run",
+        "apply_memory_relation",
+        "rollback_memory_relation",
         "review_memory_capture_item",
         "expire_memory_capture_item",
         "apply_memory_capture_reconciliation",

@@ -162,6 +162,7 @@ def open_workshop_payload(area: str, profile: str | None = None) -> dict[str, An
                 "min_profile": action.min_profile,
                 "backup_required": action.backup_required,
                 "payload_schema": action.payload_schema or {},
+                "payload_constraints": action.payload_constraints or {},
             }
             for action in workshop.actions
             if profile_allows(resolved, action.min_profile)
