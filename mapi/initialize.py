@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -73,6 +74,30 @@ def _validated_identifier(value: str, field: str) -> str:
     if not _IDENTIFIER.fullmatch(normalized):
         raise ValueError(f"invalid_{field}")
     return normalized
+
+
+def detect_repository_root() -> Path | None:
+    candidates = [Path(__file__).resolve().parents[1], Path.cwd().resolve()]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode == 0 and completed.stdout.strip():
+            return Path(completed.stdout.strip()).resolve()
+    return None
 
 
 def _validate_public_url(value: str | None, *, required: bool) -> str | None:
@@ -176,6 +201,7 @@ def _environment_values(options: InitOptions, validated: Mapping[str, Any]) -> d
     log_dir = (root / "logs").resolve()
     mode = str(validated["mode"])
     remote_enabled = mode == "vps-remote-auth"
+    repository_root = detect_repository_root()
     values = {
         "MAPI_ROOT": str(root),
         "MAPI_DATA_DIR": str(data_dir),
@@ -198,6 +224,8 @@ def _environment_values(options: InitOptions, validated: Mapping[str, Any]) -> d
         "MAPI_REMOTE_AUTH_ENABLED": "true" if remote_enabled else "false",
         "MAPI_SYSTEMD_SERVICE_NAME": str(validated["service_name"]),
     }
+    if repository_root is not None:
+        values["MAPI_REPOSITORY_ROOT"] = str(repository_root)
     if options.recovery_command_json:
         values["MAPI_RECOVERY_COMMAND_JSON"] = options.recovery_command_json
     if validated.get("public_url"):
@@ -362,6 +390,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "MAPI_AGENT_PROJECT_KEY", "MAPI_REMOTE_AUTH_ENABLED", "MAPI_REMOTE_BASE_URL",
             "MAPI_REMOTE_OAUTH_CLIENT_ID", "MAPI_REMOTE_OAUTH_REDIRECT_URIS",
             "MAPI_REMOTE_IDENTITY_HEADER", "MAPI_REMOTE_IDENTITY_VALUE", "MAPI_SYSTEMD_SERVICE_NAME",
+            "MAPI_REPOSITORY_ROOT",
         )
         mismatches = [key for key in guarded_keys if key in existing or key in values if existing.get(key) != values.get(key)]
         if mismatches:

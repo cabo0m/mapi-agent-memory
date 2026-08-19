@@ -123,7 +123,8 @@ def _worktree_inventory(output: str) -> list[dict[str, Any]]:
 
 
 def repository_state(root: Path | None = None) -> dict[str, Any]:
-    resolved_root = Path(root or runtime_root()).resolve()
+    configured = str(os.environ.get("MAPI_REPOSITORY_ROOT") or "").strip()
+    resolved_root = Path(root or configured or runtime_root()).resolve()
     head_code, head = _run_git(resolved_root, "rev-parse", "HEAD")
     tracked_code, tracked_status = _run_git(
         resolved_root, "status", "--porcelain=v1", "--untracked-files=no"

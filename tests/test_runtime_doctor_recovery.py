@@ -5,6 +5,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 import mcp_surface
 
 from app.runtime.doctor import backup_snapshot, database_snapshot, evaluate_components
@@ -96,3 +98,31 @@ def test_governance_exposes_read_only_doctor_and_recovery_plan() -> None:
     assert actions["doctor"]["tool_name"] == "get_mapi_doctor_report"
     assert actions["recovery_plan"]["risk_class"] == "R0"
     assert actions["recovery_plan"]["tool_name"] == "get_mapi_recovery_plan"
+
+
+def test_repository_state_uses_configured_repository_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.runtime.freshness as freshness
+
+    configured = tmp_path / "source-checkout"
+    configured.mkdir()
+    seen: list[Path] = []
+
+    def fake_run_git(root: Path, *args: str):
+        seen.append(root)
+        command = tuple(args)
+        if command == ("rev-parse", "HEAD"):
+            return 0, "abc123"
+        if command[:2] == ("status", "--porcelain=v1"):
+            return 0, ""
+        if command == ("worktree", "list", "--porcelain"):
+            return 0, ""
+        return 1, ""
+
+    monkeypatch.setenv("MAPI_REPOSITORY_ROOT", str(configured))
+    monkeypatch.setattr(freshness, "_run_git", fake_run_git)
+    state = freshness.repository_state()
+
+    assert state["root"] == str(configured.resolve())
+    assert state["head"] == "abc123"
+    assert state["git_available"] is True
+    assert seen and all(root == configured.resolve() for root in seen)

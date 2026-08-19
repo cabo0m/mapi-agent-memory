@@ -133,6 +133,6 @@ def collect_doctor_report(*, root: Path | None = None, db_path: Path | None = No
     if deep and qa_provider is not None:
         try: deep_payload["search_qa"] = qa_provider()
         except Exception as exc: deep_payload["search_qa"] = {"status": "error", "error": exc.__class__.__name__}
-    components = {"repository": repository_state(resolved_root), "database": database_snapshot(resolved_db), "backup": backup_snapshot(resolved_root, now=now), "network": network_snapshot(), "remote_auth": {"enabled": remote.enabled, "base_url": remote.base_url}, "runtime_readiness": readiness, "optional_capabilities": optional_capabilities_snapshot(), "deep": deep_payload}
+    components = {"repository": repository_state(), "database": database_snapshot(resolved_db), "backup": backup_snapshot(resolved_root, now=now), "network": network_snapshot(), "remote_auth": {"enabled": remote.enabled, "base_url": remote.base_url}, "runtime_readiness": readiness, "optional_capabilities": optional_capabilities_snapshot(), "deep": deep_payload}
     status, findings = evaluate_components(components)
     return {"schema": DOCTOR_SCHEMA, "status": status, "generated_at": (now or datetime.now(UTC)).isoformat().replace("+00:00", "Z"), "root": str(resolved_root), "database": str(resolved_db), "deep": bool(deep), "findings": findings, "components": components}

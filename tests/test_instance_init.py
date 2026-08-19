@@ -364,3 +364,16 @@ def test_resume_reuses_verified_initial_backup(tmp_path: Path) -> None:
     assert first["initial_backup"]["status"] == "created"
     assert second["initial_backup"]["status"] == "existing_verified"
     assert second["initial_backup"]["path"] == first["initial_backup"]["path"]
+
+
+def test_init_persists_detected_repository_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapi.initialize as init_module
+
+    repository_root = tmp_path / "source-checkout"
+    repository_root.mkdir()
+    monkeypatch.setattr(init_module, "detect_repository_root", lambda: repository_root)
+
+    root = tmp_path / "instance"
+    initialize_instance(_options(root))
+    env = parse_environment_file(root / ".env")
+    assert env["MAPI_REPOSITORY_ROOT"] == str(repository_root.resolve())

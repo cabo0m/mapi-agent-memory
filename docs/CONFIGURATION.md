@@ -6,6 +6,7 @@ The authoritative neutral template is [`.env.example`](../.env.example). `mapi-i
 |---|---|---:|---|
 | `MAPI_INSTANCE_ROOT` | `~/.mapi-agent-memory` | no | Discovery root for the generated instance `.env` |
 | `MAPI_ROOT` | instance root | no | Runtime root used for relative paths and generated state |
+| `MAPI_REPOSITORY_ROOT` | detected source checkout | no | Git/freshness source root when instance data lives outside the checkout |
 | `MAPI_DATA_DIR` | `<root>/data` | no | Contains private agent data |
 | `MAPI_DB_PATH` | `./data/mapi.db` | no | Direct read access exposes memories |
 | `MAPI_RUNTIME_HOST` | `127.0.0.1` | no | Non-loopback binds require auth and TLS |
