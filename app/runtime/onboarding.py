@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -123,6 +124,46 @@ def _next_step(step: str) -> str | None:
     return ONBOARDING_STEPS[index + 1] if index + 1 < len(ONBOARDING_STEPS) else None
 
 
+def _normalize_no_exclusions(text: str) -> str | None:
+    compact = re.sub(r"[\s.!?]+$", "", text.strip().casefold())
+    no_exclusion_answers = {
+        "brak",
+        "brak wykluczeń",
+        "brak wykluczen",
+        "bez wykluczeń",
+        "bez wykluczen",
+        "nie mam wykluczeń",
+        "nie mam wykluczen",
+        "nic nie wykluczam",
+        "niczego nie wykluczam",
+        "żadnych",
+        "zadnych",
+        "none",
+        "no exclusions",
+    }
+    return None if compact in no_exclusion_answers else text
+
+
+def _normalize_first_project_name(text: str) -> str:
+    value = text.strip()
+    for pattern in (r"„([^”]+)”", r'"([^"]+)"', r"'([^']+)'"):
+        match = re.search(pattern, value)
+        if match:
+            candidate = match.group(1).strip()
+            if candidate:
+                return candidate
+
+    named_match = re.search(
+        r"(?i)(?:\bo\s+nazwie\b|\bnazwany\b|\bnazwana\b|\bnazwane\b|\bnamed\b|\bcalled\b)\s+(.+)$",
+        value,
+    )
+    if named_match:
+        candidate = named_match.group(1).strip().strip(" .,!?:;\"'„”")
+        if candidate:
+            return candidate
+    return value
+
+
 def _normalize_answer(step: str, value: Any, *, skip: bool) -> Any:
     text = str(value or "").strip()
     if skip:
@@ -144,6 +185,13 @@ def _normalize_answer(step: str, value: Any, *, skip: bool) -> Any:
         if normalized in {"confirmed", "tak", "yes", "ok", "potwierdzam", "zgadza się", "zgadza sie"}:
             return "confirmed"
         raise ValueError("summary_confirmation_required")
+    if step == "memory_exclusions":
+        normalized_exclusions = _normalize_no_exclusions(text)
+        if normalized_exclusions is None:
+            return None
+        text = normalized_exclusions
+    if step == "first_project":
+        text = _normalize_first_project_name(text)
     limits = {
         "agent_name": 80,
         "user_name": 120,

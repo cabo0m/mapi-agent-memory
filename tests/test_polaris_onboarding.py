@@ -70,15 +70,18 @@ def test_onboarding_v2_reviews_before_atomic_profile_commit(server, monkeypatch)
     )["current_step"] == "autonomy_level"
     assert server.advance_polaris_onboarding("autonomy_level", "proactive")["current_step"] == "memory_policy"
     assert server.advance_polaris_onboarding("memory_policy", "automatic_important")["current_step"] == "memory_exclusions"
-    assert server.advance_polaris_onboarding("memory_exclusions", skip=True)["current_step"] == "first_project"
+    no_exclusions = server.advance_polaris_onboarding("memory_exclusions", "Brak wykluczeń.")
+    assert no_exclusions["current_step"] == "first_project"
+    assert no_exclusions["answers"]["memory_exclusions"] is None
 
-    review = server.advance_polaris_onboarding("first_project", "RPG")
+    review = server.advance_polaris_onboarding("first_project", "Utworzyć pierwszy projekt o nazwie „Polaris”.")
     assert review["current_step"] == "summary_confirmation"
     assert review["status"] == "onboarding_required"
     assert review["created_memory_ids"] == []
     assert review["review_summary"]["assistant_name"] == "Mira"
     assert review["review_summary"]["autonomy_level"] == "proactive"
-    assert review["review_summary"]["first_project"] == "RPG"
+    assert review["review_summary"]["first_project"] == "Polaris"
+    assert review["review_summary"]["memory_exclusions"] is None
     assert "Tak Cię zrozumiałem/am" in review["next_question"]
     assert _memory_count(server) == initial_count
 
@@ -96,7 +99,8 @@ def test_onboarding_v2_reviews_before_atomic_profile_commit(server, monkeypatch)
     assert completed["summary"]["user_name"] == "Adam Nowy"
     assert completed["summary"]["autonomy_level"] == "proactive"
     assert completed["summary"]["memory_policy"] == "automatic_important"
-    assert completed["summary"]["first_project"] == "RPG"
+    assert completed["summary"]["first_project"] == "Polaris"
+    assert completed["summary"]["memory_exclusions"] is None
     assert "zapamiętaj to" in completed["user_controls"]
     assert "co o mnie pamiętasz?" in completed["user_controls"]
     assert "ciągłość między rozmowami" in completed["completion_note"]
@@ -127,7 +131,7 @@ def test_onboarding_v2_reviews_before_atomic_profile_commit(server, monkeypatch)
             "SELECT project_key, area_code, scope_code FROM memories "
             "WHERE source_event_ref='polaris-onboarding:v2:first_project'"
         ).fetchone()
-        assert tuple(project) == ("RPG", "projects", "project")
+        assert tuple(project) == ("Polaris", "projects", "project")
     finally:
         conn.close()
 
