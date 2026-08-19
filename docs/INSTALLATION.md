@@ -59,7 +59,9 @@ For a server behind an authenticated TLS proxy:
 mapi-init --mode vps-proxy --public-url https://mapi.example.com
 ```
 
-The VPS bootstrap generates `generated/mapi.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. It does not copy files into `/etc`, enable services, modify firewall rules or install a proxy. Review and execute the returned operator steps explicitly.
+The VPS bootstrap generates `generated/mapi.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. On interactive Linux it offers to install and start the systemd service immediately using `sudo` when required. For non-interactive provisioning add `--install-service`; without that flag no privileged change is attempted. Firewall, DNS and the authenticated TLS proxy remain separate infrastructure boundaries.
+
+After service installation MAPI waits for `127.0.0.1:<port>` and probes the MCP URL. The final JSON contains `connection.recommended_mcp_url`, and the terminal prints `MAPI MCP address: ...`. Public reachability is reported separately, so a missing proxy cannot be mistaken for a working public endpoint.
 
 Use `mapi-init --resume` only to finish the same initialization. Resume is idempotent and fails if identity, project namespace, profile, port or remote-auth configuration differs from the existing `.env`. Configuration changes are deliberately not an init side effect.
 

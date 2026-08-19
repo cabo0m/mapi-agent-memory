@@ -1,0 +1,141 @@
+﻿from __future__ import annotations
+
+"""Portable service installation and endpoint readiness helpers for MAPI first-run."""
+
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+SYSTEMD_SERVICE_NAME = "mapi.service"
+SYSTEMD_DESTINATION = Path("/etc/systemd/system/mapi.service")
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def _default_runner(argv: Sequence[str]) -> CommandResult:
+    completed = subprocess.run(
+        list(argv),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        shell=False,
+    )
+    return CommandResult(tuple(str(item) for item in argv), completed.returncode, completed.stdout, completed.stderr)
+
+
+def systemd_available() -> bool:
+    return sys.platform.startswith("linux") and shutil.which("systemctl") is not None
+
+
+def _privilege_prefix(*, allow_prompt: bool) -> list[str]:
+    geteuid = getattr(os, "geteuid", None)
+    if callable(geteuid) and int(geteuid()) == 0:
+        return []
+    sudo = shutil.which("sudo")
+    if not sudo:
+        raise RuntimeError("system_service_install_requires_root_or_sudo")
+    return [sudo] if allow_prompt else [sudo, "-n"]
+
+
+def install_systemd_service(
+    unit_path: str | Path,
+    *,
+    allow_sudo_prompt: bool,
+    runner: Callable[[Sequence[str]], CommandResult] = _default_runner,
+) -> dict[str, Any]:
+    source = Path(unit_path).expanduser().resolve()
+    if not source.is_file():
+        raise RuntimeError("generated_systemd_unit_missing")
+    if not systemd_available():
+        raise RuntimeError("systemd_not_available")
+    prefix = _privilege_prefix(allow_prompt=allow_sudo_prompt)
+    commands = [
+        [*prefix, "install", "-m", "0644", str(source), str(SYSTEMD_DESTINATION)],
+        [*prefix, "systemctl", "daemon-reload"],
+        [*prefix, "systemctl", "enable", "--now", SYSTEMD_SERVICE_NAME],
+    ]
+    results: list[dict[str, Any]] = []
+    for argv in commands:
+        result = runner(argv)
+        results.append(
+            {
+                "argv": list(result.argv),
+                "returncode": int(result.returncode),
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            }
+        )
+        if result.returncode != 0:
+            raise RuntimeError("systemd_install_failed:" + Path(argv[-1]).name)
+
+    status = runner(["systemctl", "is-active", SYSTEMD_SERVICE_NAME])
+    active = status.returncode == 0 and status.stdout.strip() == "active"
+    return {
+        "status": "active" if active else "installed_not_active",
+        "service_name": SYSTEMD_SERVICE_NAME,
+        "unit_destination": str(SYSTEMD_DESTINATION),
+        "active": active,
+        "commands": results,
+        "status_stdout": status.stdout.strip(),
+        "status_stderr": status.stderr.strip(),
+    }
+
+
+def wait_for_listener(host: str, port: int, *, timeout_seconds: float = 12.0, interval_seconds: float = 0.25) -> dict[str, Any]:
+    deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+    attempts = 0
+    last_error = ""
+    while time.monotonic() < deadline:
+        attempts += 1
+        try:
+            with socket.create_connection((host, int(port)), timeout=min(1.0, max(0.1, timeout_seconds))):
+                return {"status": "ready", "host": host, "port": int(port), "attempts": attempts}
+        except OSError as exc:
+            last_error = type(exc).__name__
+            time.sleep(max(0.05, float(interval_seconds)))
+    return {"status": "timeout", "host": host, "port": int(port), "attempts": attempts, "last_error": last_error}
+
+
+def probe_http_endpoint(url: str, *, timeout_seconds: float = 4.0) -> dict[str, Any]:
+    request = urllib.request.Request(
+        str(url),
+        method="GET",
+        headers={"Accept": "application/json, text/event-stream"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:
+            code = int(getattr(response, "status", 200))
+            return {"status": "reachable", "url": str(url), "http_status": code, "server_response": "accepted"}
+    except urllib.error.HTTPError as exc:
+        code = int(exc.code)
+        if code in {401, 403, 405, 406, 415, 422, 426, 429}:
+            return {"status": "reachable", "url": str(url), "http_status": code, "server_response": "protocol_or_auth_boundary"}
+        return {"status": "unhealthy", "url": str(url), "http_status": code}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {"status": "unreachable", "url": str(url), "error": type(exc).__name__}
+
+
+def mcp_connection_urls(*, public_origin: str | None, port: int) -> dict[str, str | None]:
+    loopback = f"http://127.0.0.1:{int(port)}/mcp/"
+    public = f"{str(public_origin).rstrip('/')}/mcp/" if public_origin else None
+    return {
+        "loopback_mcp_url": loopback,
+        "public_mcp_url": public,
+        "recommended_mcp_url": public or loopback,
+    }

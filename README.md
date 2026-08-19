@@ -89,7 +89,17 @@ For a VPS, run the wizard and choose `vps-proxy` or `vps-remote-auth`, or use fl
 mapi-init --mode vps-proxy --public-url https://mapi.example.com
 ```
 
-The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. Installing the unit and configuring authenticated TLS remain explicit operator steps. `mapi-init --resume` is idempotent and refuses identity/runtime reconfiguration.
+The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. On an interactive Linux VPS, `mapi-init` offers to install and start the generated systemd service immediately; the default answer is yes. In automation use `--install-service` explicitly. The installer runs `systemctl enable --now`, waits for the local listener and probes the endpoint. `mapi-init --resume` is idempotent and refuses identity/runtime reconfiguration.
+
+At the end, the installer prints the exact connection address, for example:
+
+```text
+MAPI MCP address: https://mapi.example.com/mcp/
+Local loopback: http://127.0.0.1:8015/mcp/
+Endpoint status: public_endpoint_reachable
+```
+
+The same address is printed every time `mapi-server` starts. If the authenticated TLS reverse proxy is not ready yet, the address is still reported but the status remains `configured` or `local_listener_ready` instead of claiming public reachability.
 
 Operational commands load the generated instance automatically from the default root. For a custom root, pass the same path explicitly, for example `mapi-doctor --root <instance-root>`, `mapi-server --root <instance-root>` or `mapi-recover --root <instance-root>`. `mapi-doctor` is the canonical health report; `mapi-recover` is preview-first unless `--execute` is explicitly requested.
 

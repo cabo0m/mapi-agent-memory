@@ -32,6 +32,8 @@ Environment variables are process configuration, not authorization. A payload fi
 
 ## First-run configuration
 
+Every initialized instance has a deterministic MCP URL: `http://127.0.0.1:<port>/mcp/` locally, or `<public HTTPS origin>/mcp/` for VPS modes. `mapi-init` and `mapi-server` print the recommended URL. A reported public URL is considered verified only when the endpoint probe succeeds.
+
 `mapi-init` owns instance creation. Its generated file is private state and must not be committed. The default instance root is outside the source checkout. Local bootstrap may explicitly enable the admin surface only when `--profile admin` is chosen; VPS bootstrap rejects an admin profile. Resume never acts as an implicit configuration editor.
 
 The generated self-model records are operational evidence from the operator's explicit configuration: one identity record and one namespace-separation guardrail. They are not demo memories or inferred personality traits.

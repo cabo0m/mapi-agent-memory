@@ -67,6 +67,11 @@ def _init_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recovery-command-json")
     parser.add_argument("--resume", action="store_true", help="Resume an existing init without duplicating self seeds")
     parser.add_argument("--no-self-seed", action="store_true", help="Do not create neutral Agent Self Model bootstrap records")
+    service_group = parser.add_mutually_exclusive_group()
+    service_group.add_argument("--install-service", action="store_true", help="Install and start generated systemd service")
+    service_group.add_argument("--no-install-service", action="store_true", help="Generate systemd unit but do not install it")
+    parser.add_argument("--no-verify-endpoint", action="store_true", help="Skip post-start endpoint reachability probes")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON only")
     parser.add_argument("--non-interactive", action="store_true", help="Never prompt; use flags/defaults or fail closed")
     return parser
 
@@ -114,6 +119,14 @@ def init() -> None:
             raw = input("Allowed OAuth redirect URI(s), comma-separated HTTPS URLs: ").strip()
             redirects = [item.strip() for item in raw.split(",") if item.strip()]
 
+    install_service = bool(args.install_service)
+    if mode != "local" and not args.install_service and not args.no_install_service and interactive:
+        from mapi.system_install import systemd_available
+
+        if systemd_available():
+            answer = input("Install and start MAPI as a systemd service now? [Y/n]: ").strip().casefold()
+            install_service = answer not in {"n", "no", "nie"}
+
     options = InitOptions(
         root=args.root,
         mode=mode,
@@ -132,13 +145,32 @@ def init() -> None:
         recovery_command_json=args.recovery_command_json or existing_env.get("MAPI_RECOVERY_COMMAND_JSON"),
         resume=bool(args.resume),
         seed_self=not bool(args.no_self_seed),
+        install_service=install_service,
+        allow_sudo_prompt=interactive,
+        verify_endpoint=not bool(args.no_verify_endpoint),
     )
     try:
         result = initialize_instance(options)
     except (ValueError, RuntimeError) as exc:
         print(json.dumps({"status": "error", "schema": "mapi_instance_init.v1", "error": str(exc)}, indent=2))
         raise SystemExit(2) from None
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    connection = dict(result.get("connection") or {})
+    recommended = connection.get("recommended_mcp_url")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"MAPI init status: {result.get('status')}")
+        print(f"Instance root: {result.get('root')}")
+        print(f"Database: {result.get('database')}")
+        print(f"Doctor: {result.get('doctor_status')}")
+        service = dict(result.get("system_service") or {})
+        if service.get("status") != "not_requested":
+            print(f"System service: {service.get('status')}")
+        if connection.get("public_mcp_url") and connection.get("loopback_mcp_url") != recommended:
+            print(f"Local loopback: {connection.get('loopback_mcp_url')}")
+        print(f"Endpoint status: {connection.get('status', 'configured')}")
+        if recommended:
+            print(f"MAPI MCP address: {recommended}")
     if result.get("status") == "blocked":
         raise SystemExit(2)
 
@@ -201,6 +233,15 @@ def server() -> None:
     _apply_runtime_cli_environment()
     os.environ.setdefault("MCP_SURFACE_PROFILE", "agent")
     os.environ.setdefault("MAPI_RUNTIME_HOST", "127.0.0.1")
+    from mapi.system_install import mcp_connection_urls
+
+    urls = mcp_connection_urls(
+        public_origin=os.environ.get("MAPI_REMOTE_BASE_URL"),
+        port=int(os.environ.get("MAPI_RUNTIME_PORT", "8015")),
+    )
+    print(f"MAPI MCP address: {urls['recommended_mcp_url']}")
+    if urls.get("public_mcp_url"):
+        print(f"Local loopback: {urls['loopback_mcp_url']}")
     from app.runtime.server_runtime import run_server
 
     run_server()

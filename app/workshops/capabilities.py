@@ -127,7 +127,11 @@ def build_mapi_capabilities_payload(*, runtime_readiness: Mapping[str, Any]) -> 
                 "self_model_seed": "explicit_operator_configuration_only",
                 "resume_idempotent": True,
                 "resume_reconfiguration_allowed": False,
-                "privileged_system_changes": False,
+                "privileged_system_changes": "optional_systemd_install_only",
+                "interactive_vps_systemd_default": "offer_install_and_start",
+                "endpoint_output": True,
+                "endpoint_probe": True,
+                "server_start_prints_mcp_url": True,
                 "remote_admin_profile_allowed": False,
             },
             "operations.doctor_recovery": {

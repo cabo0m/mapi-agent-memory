@@ -207,3 +207,63 @@ def test_remote_init_rejects_admin_surface_profile(tmp_path: Path) -> None:
         validate_init_options(
             _options(tmp_path / "instance", mode="vps-proxy", public_url="https://mapi.example.test", profile="admin")
         )
+
+
+def test_init_always_returns_exact_mcp_connection_address(tmp_path: Path) -> None:
+    root = tmp_path / "instance"
+    local = initialize_instance(_options(root))
+    assert local["connection"]["recommended_mcp_url"] == "http://127.0.0.1:8015/mcp/"
+    assert local["connection"]["status"] == "configured"
+
+
+def test_vps_service_install_marks_listener_ready_and_reports_public_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapi.initialize as init_module
+
+    root = tmp_path / "instance"
+    monkeypatch.setattr(
+        init_module,
+        "install_systemd_service",
+        lambda *args, **kwargs: {"status": "active", "active": True, "service_name": "mapi.service"},
+    )
+    monkeypatch.setattr(
+        init_module,
+        "wait_for_listener",
+        lambda host, port: {"status": "ready", "host": host, "port": port, "attempts": 1},
+    )
+    monkeypatch.setattr(
+        init_module,
+        "probe_http_endpoint",
+        lambda url: {"status": "reachable", "url": url, "http_status": 401},
+    )
+    result = initialize_instance(
+        _options(
+            root,
+            mode="vps-proxy",
+            public_url="https://mapi.example.test",
+            install_service=True,
+        )
+    )
+    assert result["status"] == "ready"
+    assert result["connection"]["recommended_mcp_url"] == "https://mapi.example.test/mcp/"
+    assert result["connection"]["loopback_mcp_url"] == "http://127.0.0.1:8015/mcp/"
+    assert result["connection"]["status"] == "public_endpoint_reachable"
+    assert result["system_service"]["active"] is True
+    assert result["safety"]["privileged_system_changes_performed"] is True
+
+
+def test_requested_service_install_failure_blocks_init_but_preserves_connection_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapi.initialize as init_module
+
+    root = tmp_path / "instance"
+    monkeypatch.setattr(init_module, "install_systemd_service", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("sudo_failed")))
+    result = initialize_instance(
+        _options(
+            root,
+            mode="vps-proxy",
+            public_url="https://mapi.example.test",
+            install_service=True,
+        )
+    )
+    assert result["status"] == "blocked"
+    assert result["system_service"]["status"] == "failed"
+    assert result["connection"]["recommended_mcp_url"] == "https://mapi.example.test/mcp/"

@@ -17,6 +17,12 @@ from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
 from mapi.env import default_instance_root, parse_environment_file
+from mapi.system_install import (
+    install_systemd_service,
+    mcp_connection_urls,
+    probe_http_endpoint,
+    wait_for_listener,
+)
 
 MAPI_INIT_SCHEMA = "mapi_instance_init.v1"
 MAPI_INIT_MANIFEST_SCHEMA = "mapi_instance_manifest.v1"
@@ -44,6 +50,9 @@ class InitOptions:
     recovery_command_json: str | None = None
     resume: bool = False
     seed_self: bool = True
+    install_service: bool = False
+    allow_sudo_prompt: bool = False
+    verify_endpoint: bool = True
 
 
 def _text(value: Any) -> str:
@@ -398,6 +407,15 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
 
     artifacts: dict[str, str] = {"env_file": str(env_file)}
     operator_steps: list[str] = []
+    connection = mcp_connection_urls(public_origin=validated.get("public_url"), port=int(options.port))
+    service_result: dict[str, Any] = {"status": "not_requested", "active": False}
+    listener_result: dict[str, Any] = {"status": "not_checked"}
+    loopback_probe: dict[str, Any] = {"status": "not_checked", "url": connection["loopback_mcp_url"]}
+    public_probe: dict[str, Any] = {
+        "status": "not_configured" if not connection.get("public_mcp_url") else "not_checked",
+        "url": connection.get("public_mcp_url"),
+    }
+
     if validated["mode"] != "local":
         service_user = _text(options.service_user) or getpass.getuser()
         systemd_path = generated_dir / "mapi.service"
@@ -412,17 +430,56 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             ),
         )
         artifacts.update({"systemd_unit": str(systemd_path), "proxy_security_template": str(proxy_path)})
+        if options.install_service:
+            try:
+                service_result = install_systemd_service(
+                    systemd_path,
+                    allow_sudo_prompt=bool(options.allow_sudo_prompt),
+                )
+            except RuntimeError as exc:
+                service_result = {"status": "failed", "active": False, "error": str(exc)}
+            if service_result.get("active"):
+                listener_result = wait_for_listener("127.0.0.1", int(options.port))
+                if listener_result.get("status") == "ready" and options.verify_endpoint:
+                    loopback_probe = probe_http_endpoint(str(connection["loopback_mcp_url"]))
+                if connection.get("public_mcp_url") and options.verify_endpoint:
+                    public_probe = probe_http_endpoint(str(connection["public_mcp_url"]))
+        else:
+            operator_steps.extend(
+                [
+                    f"sudo cp {systemd_path} /etc/systemd/system/mapi.service",
+                    "sudo systemctl daemon-reload",
+                    "sudo systemctl enable --now mapi.service",
+                ]
+            )
         operator_steps.extend(
             [
-                f"sudo cp {systemd_path} /etc/systemd/system/mapi.service",
-                "sudo systemctl daemon-reload",
-                "sudo systemctl enable --now mapi.service",
                 "Configure authenticated TLS reverse proxy using generated security template.",
-                "Run mapi-doctor and python scripts/smoke_mcp.py after the service is reachable.",
+                f"Connect the MCP client to {connection['recommended_mcp_url']} after the public endpoint is reachable.",
             ]
         )
     else:
-        operator_steps.extend(["Run mapi-server.", "In another shell run python scripts/smoke_mcp.py."])
+        operator_steps.extend(
+            [
+                "Run mapi-server.",
+                f"Connect the MCP client to {connection['recommended_mcp_url']}.",
+            ]
+        )
+
+    connection_status = "configured"
+    if service_result.get("active") and listener_result.get("status") == "ready":
+        connection_status = "local_listener_ready"
+    if public_probe.get("status") == "reachable":
+        connection_status = "public_endpoint_reachable"
+    connection.update(
+        {
+            "status": connection_status,
+            "service": service_result,
+            "listener": listener_result,
+            "loopback_probe": loopback_probe,
+            "public_probe": public_probe,
+        }
+    )
 
     manifest_core = {
         "schema": MAPI_INIT_MANIFEST_SCHEMA,
@@ -437,6 +494,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         "runtime": {"host": "127.0.0.1", "port": int(options.port), "profile": validated["profile"]},
         "remote_auth_enabled": validated["mode"] == "vps-remote-auth",
         "public_url": validated.get("public_url"),
+        "connection": connection,
         "self_memory_ids": self_memory_ids,
         "artifacts": artifacts,
     }
@@ -445,7 +503,9 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
     _write_atomic(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     artifacts["manifest"] = str(manifest_path)
 
-    status = "blocked" if doctor.get("status") == "BLOCKED" else "ready_to_start"
+    service_failed = options.install_service and not bool(service_result.get("active"))
+    listener_failed = bool(service_result.get("active")) and listener_result.get("status") != "ready"
+    status = "blocked" if doctor.get("status") == "BLOCKED" or service_failed or listener_failed else ("ready" if connection_status in {"local_listener_ready", "public_endpoint_reachable"} else "ready_to_start")
     return {
         "status": status,
         "schema": MAPI_INIT_SCHEMA,
@@ -458,6 +518,8 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         "self_memory_ids": self_memory_ids,
         "doctor_status": doctor.get("status"),
         "doctor_findings": doctor.get("findings") or [],
+        "connection": connection,
+        "system_service": service_result,
         "artifacts": artifacts,
         "operator_steps": operator_steps,
         "safety": {
@@ -465,7 +527,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "loopback_runtime": True,
             "admin_tools_enabled": validated["mode"] == "local" and validated["profile"] == "admin",
             "demo_seeded": False,
-            "privileged_system_changes_performed": False,
+            "privileged_system_changes_performed": bool(options.install_service and service_result.get("status") != "not_requested"),
             "reverse_proxy_auth_required": validated["mode"] != "local",
         },
     }

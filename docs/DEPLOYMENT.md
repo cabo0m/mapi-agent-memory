@@ -4,7 +4,9 @@
 
 Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` additionally validates the built-in OAuth/PKCE remote-auth configuration and requires an HTTPS redirect allowlist plus a trusted proxy-injected identity value.
 
-Neither VPS mode performs root actions. Review `generated/mapi.service` and the reverse-proxy security template, install them through your normal privileged deployment process, then run `mapi-doctor` and the MCP smoke. The proxy must authenticate requests and terminate TLS. A generated template is intentionally incomplete until that authentication boundary is configured.
+VPS mode can now install and start the generated systemd service as part of `mapi-init`. Interactive installation offers this automatically; provisioning scripts use `--install-service`. The installer never modifies firewall or DNS and does not silently publish an unauthenticated proxy. The proxy must authenticate requests and terminate TLS. A generated proxy template is intentionally incomplete until that authentication boundary is configured.
+
+The installer reports both the loopback MCP URL and the final public MCP URL. It marks the public endpoint reachable only after an HTTP probe succeeds; otherwise the returned address is the configured target that still needs the external proxy boundary.
 
 ## Localhost development
 
