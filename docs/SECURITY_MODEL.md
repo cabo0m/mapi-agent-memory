@@ -24,7 +24,7 @@ Unknown profiles and unknown action requirements fail closed.
 
 ## Dangerous tools
 
-The `admin` workshop includes filesystem, SQL, process and migration functions. It is for a trusted local operator only. Do not expose it through a public reverse proxy.
+The `admin` workshop includes filesystem, SQL, process and migration functions. It is available locally only with the explicit admin gate, and remotely only to the single OAuth-authenticated owner in `vps-remote-auth` mode. Do not expose it through an unauthenticated reverse proxy.
 
 ## Provider trust
 
@@ -39,11 +39,11 @@ Protect the SQLite file and backups with operating-system permissions and encryp
 | Threat | Mitigation |
 |---|---|
 | Profile spoofing in payload | Profiles come from runtime/auth context, never payload |
-| Remote admin exposure | Loopback default, explicit admin gate, deployment prohibition |
+| Remote admin exposure | Loopback origin, built-in OAuth, external owner identity boundary, explicit admin gate, single-owner mapping |
 | Destructive lifecycle action | Preview hashes, profile checks, audit and rollback records |
 | Provider hallucination | Proposal-only contract and evidence allowlists |
 | Secret committed to Git | Public audit, `.gitignore`, CI scan |
 | Database copied into release | Exact file manifest and forbidden binary/database rules |
 | Concurrent writers | Writer guard and SQLite single-writer guidance |
 
-Authentication for remote deployments is outside the application-level guarantee of this release candidate.
+Remote authentication is part of the application contract in `vps-remote-auth` mode: one owner OAuth identity maps to `admin`, while the origin remains loopback-only behind HTTPS and the trusted identity boundary.

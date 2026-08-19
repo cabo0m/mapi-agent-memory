@@ -132,7 +132,9 @@ def build_mapi_capabilities_payload(*, runtime_readiness: Mapping[str, Any]) -> 
                 "endpoint_output": True,
                 "endpoint_probe": True,
                 "server_start_prints_mcp_url": True,
-                "remote_admin_profile_allowed": False,
+                "remote_auth_model": "single_owner_oauth_admin",
+                "remote_admin_profile_allowed": True,
+                "secondary_remote_login_paths": False,
             },
             "operations.doctor_recovery": {
                 "doctor_schema": "mapi_doctor.v1",

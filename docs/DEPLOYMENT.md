@@ -2,7 +2,7 @@
 
 ## First server bootstrap
 
-Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` additionally validates the built-in OAuth/PKCE remote-auth configuration and requires an HTTPS redirect allowlist plus a trusted proxy-injected identity value.
+Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` is the single-owner deployment mode: it validates OAuth/PKCE, requires an HTTPS redirect allowlist plus a trusted proxy-injected owner identity, and maps that one authenticated owner directly to the `admin` profile.
 
 VPS mode can now install and start the generated systemd service as part of `mapi-init`. Interactive installation offers this automatically; provisioning scripts use `--install-service`. The installer never modifies firewall or DNS and does not silently publish an unauthenticated proxy. The proxy must authenticate requests and terminate TLS. A generated proxy template is intentionally incomplete until that authentication boundary is configured.
 

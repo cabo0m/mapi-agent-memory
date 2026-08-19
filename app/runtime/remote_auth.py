@@ -804,50 +804,8 @@ class CodexBearerVerifier(TokenVerifier):
         )
 
 
-def issue_codex_bearer_token(
-    *,
-    db_path: str | Path,
-    owner_key: str = REMOTE_AUTH_OWNER_KEY,
-    label: str = "codex",
-    ttl_seconds: int = 90 * 24 * 3600,
-    now_epoch: int | None = None,
-) -> dict[str, Any]:
-    normalized_owner = str(owner_key or "").strip().lower()
-    if normalized_owner != REMOTE_AUTH_OWNER_KEY:
-        raise ValueError("codex_token_owner_must_be_owner")
-    raw_token = "mapi_cx_" + secrets.token_urlsafe(48)
-    store = RemoteAuthStore(db_path)
-    expires_at = int(now_epoch if now_epoch is not None else _now_epoch()) + max(3600, int(ttl_seconds))
-    token_hash = store.insert_token(
-        raw_token=raw_token,
-        token_kind="codex",
-        client_id="codex",
-        owner_key=normalized_owner,
-        profile=REMOTE_CODEX_PROFILE,
-        scopes=REMOTE_CODEX_SCOPES,
-        expires_at=expires_at,
-        label=str(label or "codex").strip() or "codex",
-    )
-    store.audit(
-        event_type="codex_token_issue",
-        channel="codex",
-        outcome="allowed",
-        reason_code="codex_token_issued",
-        token_hash=token_hash,
-        client_id="codex",
-        owner_key=normalized_owner,
-        profile=REMOTE_CODEX_PROFILE,
-    )
-    return {
-        "status": "issued",
-        "token": raw_token,
-        "token_fingerprint": _fingerprint_from_hash(token_hash),
-        "owner_key": normalized_owner,
-        "profile": REMOTE_CODEX_PROFILE,
-        "scopes": list(REMOTE_CODEX_SCOPES),
-        "expires_at": expires_at,
-        "warning": "The raw token is returned once and is never stored in the database.",
-    }
+def issue_codex_bearer_token(**_: Any) -> dict[str, Any]:
+    raise RuntimeError("codex_bearer_retired_single_owner_admin_oauth")
 
 
 def build_remote_auth_provider(
@@ -861,10 +819,9 @@ def build_remote_auth_provider(
         db_path=db_path,
         identity_resolver=identity_resolver,
     )
-    codex = CodexBearerVerifier(config=config, db_path=db_path)
     return MultiAuth(
         server=oauth,
-        verifiers=[codex],
+        verifiers=[],
         base_url=config.base_url,
         resource_base_url=config.base_url,
         required_scopes=[REMOTE_REQUIRED_SCOPE],
@@ -939,13 +896,13 @@ def remote_auth_status(
             "refresh_ttl_seconds": resolved.refresh_ttl_seconds,
             "profile": REMOTE_OAUTH_PROFILE,
         },
-        "codex": {
-            "profile": REMOTE_CODEX_PROFILE,
-            "separate_token_store": True,
-            "rotation_supported": True,
-            "revocation_supported": True,
+        "legacy_codex": {
+            "status": "retired_not_accepted",
+            "stored_token_rows_ignored": True,
         },
-        "remote_admin_exposed": False,
+        "remote_admin_exposed": True,
+        "remote_admin_auth_channel": "owner_oauth_only",
+        "single_remote_user": True,
         "profiles_derive_from_auth": True,
         "raw_tokens_stored": False,
         "rate_limit": {

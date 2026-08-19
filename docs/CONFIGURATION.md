@@ -34,13 +34,13 @@ Environment variables are process configuration, not authorization. A payload fi
 
 Every initialized instance has a deterministic MCP URL: `http://127.0.0.1:<port>/mcp/` locally, or `<public HTTPS origin>/mcp/` for VPS modes. `mapi-init` and `mapi-server` print the recommended URL. A reported public URL is considered verified only when the endpoint probe succeeds.
 
-`mapi-init` owns instance creation. Its generated file is private state and must not be committed. The default instance root is outside the source checkout. Local bootstrap may explicitly enable the admin surface only when `--profile admin` is chosen; VPS bootstrap rejects an admin profile. Resume never acts as an implicit configuration editor.
+`mapi-init` owns instance creation. Its generated file is private state and must not be committed. The default instance root is outside the source checkout. Local bootstrap may explicitly enable the admin surface with `--profile admin`. In `vps-remote-auth` mode the deployment is intentionally single-owner: the authenticated owner uses profile `admin`, `MAPI_ADMIN_TOOLS_ENABLED=true`, and there is no second remote login path. Resume never acts as an implicit configuration editor.
 
 The generated self-model records are operational evidence from the operator's explicit configuration: one identity record and one namespace-separation guardrail. They are not demo memories or inferred personality traits.
 
 ## Remote authentication status
 
-The runtime contains remote-auth integration points, but remote authentication is not part of the local quickstart and is classified as experimental in this public candidate. A supported remote deployment still requires a complete external identity and TLS boundary, tested token handling, restricted profile mapping and an unreachable admin surface. No private owner values, redirect URIs, endpoints or provider configuration are required or included.
+Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. The OAuth authorization step must be protected by a trusted external identity boundary and HTTPS; ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider. No private owner values, redirect URIs or identity-provider secrets are included in the repository.
 
 ## Agent Self Model
 

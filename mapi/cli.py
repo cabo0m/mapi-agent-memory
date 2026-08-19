@@ -102,7 +102,7 @@ def init() -> None:
     owner = args.owner_key or existing_env.get("MAPI_OWNER_KEY") or subject
     project = args.agent_project_key or existing_env.get("MAPI_AGENT_PROJECT_KEY") or f"{subject}-self"
     port = args.port if args.port is not None else int(existing_env.get("MAPI_RUNTIME_PORT", "8015"))
-    profile = args.profile or existing_env.get("MCP_SURFACE_PROFILE") or "agent"
+    profile = args.profile or existing_env.get("MCP_SURFACE_PROFILE") or ("admin" if mode == "vps-remote-auth" else "agent")
 
     public_url = args.public_url or existing_env.get("MAPI_REMOTE_BASE_URL")
     if mode != "local" and not public_url and interactive:

@@ -93,8 +93,10 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
     profile = _text(options.profile).casefold()
     if profile not in SAFE_PROFILES:
         raise ValueError("invalid_surface_profile")
-    if mode != "local" and profile == "admin":
-        raise ValueError("remote_admin_profile_not_allowed_by_init")
+    if mode == "vps-proxy" and profile == "admin":
+        raise ValueError("unauthenticated_vps_admin_profile_not_allowed")
+    if mode == "vps-remote-auth" and profile != "admin":
+        raise ValueError("single_owner_remote_auth_requires_admin_profile")
     if not 1 <= int(options.port) <= 65535:
         raise ValueError("invalid_runtime_port")
     owner_key = _validated_identifier(options.owner_key, "owner_key")
@@ -178,7 +180,7 @@ def _environment_values(options: InitOptions, validated: Mapping[str, Any]) -> d
         "MAPI_RUNTIME_HOST": "127.0.0.1",
         "MAPI_RUNTIME_PORT": str(int(options.port)),
         "MCP_SURFACE_PROFILE": str(validated["profile"]),
-        "MAPI_ADMIN_TOOLS_ENABLED": "true" if mode == "local" and str(validated["profile"]) == "admin" else "false",
+        "MAPI_ADMIN_TOOLS_ENABLED": "true" if str(validated["profile"]) == "admin" and mode in {"local", "vps-remote-auth"} else "false",
         "MAPI_OWNER_KEY": str(validated["owner_key"]),
         "MAPI_AGENT_SUBJECT_KEY": str(validated["agent_subject_key"]),
         "MAPI_AGENT_DISPLAY_NAME": str(validated["agent_display_name"]),
@@ -525,7 +527,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         "safety": {
             "existing_state_overwritten": False,
             "loopback_runtime": True,
-            "admin_tools_enabled": validated["mode"] == "local" and validated["profile"] == "admin",
+            "admin_tools_enabled": validated["profile"] == "admin" and validated["mode"] in {"local", "vps-remote-auth"},
             "demo_seeded": False,
             "privileged_system_changes_performed": bool(options.install_service and service_result.get("status") != "not_requested"),
             "reverse_proxy_auth_required": validated["mode"] != "local",

@@ -174,7 +174,7 @@ not promised for every plan or managed workspace.
 
 ### ChatGPT web
 
-The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Use `mapi-init --mode vps-proxy` or `mapi-init --mode vps-remote-auth` as the first-run starting point, then complete the generated authenticated TLS proxy steps. Never expose the admin surface remotely.
+The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Use `mapi-init --mode vps-remote-auth` for the supported single-owner remote deployment: the one authenticated owner receives the `admin` profile and the full workshop surface. There is no secondary remote login path. Use `vps-proxy` only when an external authenticated proxy is deliberately supplying the security boundary.
 
 ### Generic MCP client
 

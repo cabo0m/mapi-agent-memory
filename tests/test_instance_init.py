@@ -166,7 +166,7 @@ def test_vps_proxy_init_keeps_runtime_loopback_and_generates_operator_artifacts(
 def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> None:
     root = tmp_path / "instance"
     with pytest.raises(ValueError, match="oauth_redirect_allowlist_required"):
-        validate_init_options(_options(root, mode="vps-remote-auth", public_url="https://mapi.example.test"))
+        validate_init_options(_options(root, mode="vps-remote-auth", public_url="https://mapi.example.test", profile="admin"))
     with pytest.raises(ValueError, match="public_url_must_be_https_origin"):
         validate_init_options(
             _options(
@@ -175,6 +175,7 @@ def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> No
                 public_url="http://mapi.example.test",
                 oauth_redirect_uris=("https://chat.example/callback",),
                 identity_value="operator@example.test",
+                profile="admin",
             )
         )
 
@@ -190,22 +191,39 @@ def test_remote_auth_init_writes_required_config_but_manifest_does_not_copy_iden
             oauth_redirect_uris=("https://chat.example/callback",),
             identity_value=identity_value,
             identity_header="cf-access-authenticated-user-email",
+            profile="admin",
         )
     )
     assert result["status"] == "ready_to_start"
     env_text = (root / ".env").read_text(encoding="utf-8")
     manifest_text = (root / "generated" / "mapi-init-manifest.json").read_text(encoding="utf-8")
     assert "MAPI_REMOTE_AUTH_ENABLED=true" in env_text
+    assert "MCP_SURFACE_PROFILE=admin" in env_text
+    assert "MAPI_ADMIN_TOOLS_ENABLED=true" in env_text
     assert identity_value in env_text
     assert identity_value not in manifest_text
     assert "127.0.0.1" in env_text
     assert "remote_auth_enabled" in manifest_text
 
 
-def test_remote_init_rejects_admin_surface_profile(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="remote_admin_profile_not_allowed_by_init"):
+def test_unauthenticated_vps_proxy_rejects_admin_surface_profile(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unauthenticated_vps_admin_profile_not_allowed"):
         validate_init_options(
             _options(tmp_path / "instance", mode="vps-proxy", public_url="https://mapi.example.test", profile="admin")
+        )
+
+
+def test_remote_auth_requires_single_owner_admin_profile(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="single_owner_remote_auth_requires_admin_profile"):
+        validate_init_options(
+            _options(
+                tmp_path / "instance",
+                mode="vps-remote-auth",
+                public_url="https://mapi.example.test",
+                oauth_redirect_uris=("https://chat.example/callback",),
+                identity_value="operator@example.test",
+                profile="agent",
+            )
         )
 
 
