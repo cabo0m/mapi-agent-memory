@@ -22,6 +22,21 @@ def ensure_remote_auth_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS remote_auth_login_challenges (
+            challenge_hash TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            redirect_uri TEXT NOT NULL,
+            scopes_json TEXT NOT NULL CHECK (json_valid(scopes_json)),
+            code_challenge TEXT NOT NULL,
+            state TEXT,
+            expires_at INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            consumed_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS remote_auth_tokens (
             token_hash TEXT PRIMARY KEY,
             token_kind TEXT NOT NULL CHECK (token_kind IN ('access','refresh','codex')),
@@ -68,6 +83,10 @@ def ensure_remote_auth_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_remote_auth_codes_expiry "
         "ON remote_auth_authorization_codes(expires_at, consumed_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_remote_auth_login_challenges_expiry "
+        "ON remote_auth_login_challenges(expires_at, consumed_at)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_remote_auth_tokens_kind_status "

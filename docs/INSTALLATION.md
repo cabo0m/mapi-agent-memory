@@ -53,13 +53,15 @@ For automation, use `--non-interactive` plus explicit flags. For example:
 mapi-init --non-interactive --mode local --agent-name MyAgent
 ```
 
-For a server behind an authenticated TLS proxy:
+For a server using the built-in single-owner OAuth login:
 
 ```bash
-mapi-init --mode vps-proxy --public-url https://mapi.example.com --service-name polaris
+mapi-init --mode vps-remote-auth --public-url https://mapi.example.com --service-name polaris
 ```
 
-The VPS bootstrap generates `generated/<service-name>.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. The default service name is `mapi.service`; use `--service-name polaris` (or another safe systemd name) when multiple instances or existing services share a host. On interactive Linux it offers to install and start the selected systemd service immediately using `sudo` when required. For non-interactive provisioning add `--install-service`; without that flag no privileged change is attempted. Firewall, DNS and the authenticated TLS proxy remain separate infrastructure boundaries.
+The interactive wizard securely asks for the owner login/password and stores only a salted password hash. The OAuth redirect URL still comes from the MCP client (for example ChatGPT) and must be allowlisted exactly. Use `vps-proxy` instead only when an external proxy is intentionally responsible for authentication.
+
+The VPS bootstrap generates `generated/<service-name>.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. The default service name is `mapi.service`; use `--service-name polaris` (or another safe systemd name) when multiple instances or existing services share a host. On interactive Linux it offers to install and start the selected systemd service immediately using `sudo` when required. For non-interactive provisioning add `--install-service`; without that flag no privileged change is attempted. Firewall and DNS remain separate infrastructure boundaries. In `vps-remote-auth`, the proxy is TLS/forwarding only; authentication stays inside MAPI OAuth.
 
 After service installation MAPI waits for `127.0.0.1:<port>` and probes the MCP URL. Only after the start/probe phase does it run the final doctor report. The final JSON contains `connection.recommended_mcp_url`, `initial_backup`, and the selected system service. Public reachability is reported separately, so a missing proxy cannot be mistaken for a working public endpoint.
 

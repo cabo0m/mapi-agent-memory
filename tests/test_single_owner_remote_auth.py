@@ -18,7 +18,7 @@ def test_remote_actor_accepts_only_owner_oauth_admin() -> None:
     admin = SimpleNamespace(
         claims={"owner_key": "owner", "profile": "admin", "auth_channel": "oauth"},
         client_id="owner-client",
-        scopes=["mapi:read", "mapi:write", "mapi:admin"],
+        scopes=["mapi:read", "mapi:write", "mapi:admin", "offline_access"],
     )
     actor = access_token_actor(admin)
     assert actor is not None
@@ -39,6 +39,7 @@ def test_remote_actor_accepts_only_owner_oauth_admin() -> None:
 def test_runtime_auth_has_only_owner_oauth_path(tmp_path) -> None:
     code = """
 from pathlib import Path
+from app.runtime.owner_credentials import hash_owner_password
 from app.runtime.remote_auth import build_remote_auth_provider, issue_codex_bearer_token
 from app.runtime.remote_auth_config import RemoteAuthConfig
 config = RemoteAuthConfig(
@@ -47,8 +48,8 @@ config = RemoteAuthConfig(
     owner_key='owner',
     oauth_client_id='owner-client',
     oauth_redirect_uris=('https://client.example.test/callback',),
-    identity_header='cf-access-authenticated-user-email',
-    identity_value='owner@example.test',
+    owner_login='owner',
+    owner_password_hash=hash_owner_password('a sufficiently long owner password'),
 )
 provider = build_remote_auth_provider(config=config, db_path=Path('auth-test.db'))
 assert provider.server is not None
@@ -60,5 +61,121 @@ except RuntimeError as exc:
 else:
     raise AssertionError('legacy bearer issuance unexpectedly enabled')
 """
+    completed = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_owner_login_is_the_single_oauth_login_and_issues_refresh_token(tmp_path) -> None:
+    code = r'''
+import asyncio
+import base64
+import hashlib
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+from starlette.applications import Starlette
+
+from app.runtime.owner_credentials import hash_owner_password
+from app.runtime.remote_auth import PrivateSQLiteOAuthProvider
+from app.runtime.remote_auth_config import RemoteAuthConfig
+
+BASE = 'https://mapi.example.test'
+REDIRECT = 'https://chatgpt.com/connector/oauth/test-callback'
+PASSWORD = 'a sufficiently long owner password'
+config = RemoteAuthConfig(
+    enabled=True,
+    base_url=BASE,
+    owner_key='owner',
+    oauth_client_id='chatgpt-private',
+    oauth_redirect_uris=(REDIRECT,),
+    owner_login='michal',
+    owner_password_hash=hash_owner_password(PASSWORD),
+)
+provider = PrivateSQLiteOAuthProvider(config=config, db_path='auth-flow.db')
+app = Starlette(routes=provider.get_routes('/mcp/'))
+verifier = 'v' * 64
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+params = {
+    'response_type': 'code',
+    'client_id': 'chatgpt-private',
+    'redirect_uri': REDIRECT,
+    'scope': 'mapi:read mapi:write mapi:admin offline_access',
+    'state': 'state-123',
+    'code_challenge': challenge,
+    'code_challenge_method': 'S256',
+}
+
+async def main():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE, follow_redirects=False) as client:
+        metadata = await client.get('/.well-known/oauth-authorization-server')
+        assert metadata.status_code == 200, metadata.text
+        assert 'offline_access' in metadata.json()['scopes_supported']
+
+        authorize = await client.get('/authorize', params=params)
+        assert authorize.status_code == 302, authorize.text
+        login_url = authorize.headers['location']
+        parsed_login = urlparse(login_url)
+        assert parsed_login.path == '/oauth/login'
+        request_token = parse_qs(parsed_login.query)['request'][0]
+
+        login_page = await client.get('/oauth/login', params={'request': request_token})
+        assert login_page.status_code == 200
+        assert 'Zaloguj się do Polaris' in login_page.text
+        assert 'Basic' not in login_page.text
+        assert PASSWORD not in login_page.text
+
+        wrong = await client.post('/oauth/login', data={
+            'request': request_token,
+            'username': 'michal',
+            'password': 'this is the wrong password',
+        })
+        assert wrong.status_code == 401
+        assert 'Nieprawidłowy login lub hasło' in wrong.text
+
+        accepted = await client.post('/oauth/login', data={
+            'request': request_token,
+            'username': 'michal',
+            'password': PASSWORD,
+        })
+        assert accepted.status_code == 302, accepted.text
+        callback = urlparse(accepted.headers['location'])
+        assert f'{callback.scheme}://{callback.netloc}{callback.path}' == REDIRECT
+        query = parse_qs(callback.query)
+        assert query['state'] == ['state-123']
+        code = query['code'][0]
+
+        reused = await client.post('/oauth/login', data={
+            'request': request_token,
+            'username': 'michal',
+            'password': PASSWORD,
+        })
+        assert reused.status_code == 400
+
+        token = await client.post('/token', data={
+            'grant_type': 'authorization_code',
+            'code': code,
+            'client_id': 'chatgpt-private',
+            'redirect_uri': REDIRECT,
+            'code_verifier': verifier,
+        })
+        assert token.status_code == 200, token.text
+        token_body = token.json()
+        assert token_body['access_token']
+        assert token_body['refresh_token']
+
+        refresh = await client.post('/token', data={
+            'grant_type': 'refresh_token',
+            'refresh_token': token_body['refresh_token'],
+            'client_id': 'chatgpt-private',
+            'scope': 'mapi:read mapi:write mapi:admin offline_access',
+        })
+        assert refresh.status_code == 200, refresh.text
+        refreshed = refresh.json()
+        assert refreshed['access_token']
+        assert refreshed['refresh_token']
+
+asyncio.run(main())
+'''
     completed = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
     assert completed.returncode == 0, completed.stderr

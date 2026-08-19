@@ -61,8 +61,7 @@ def _init_parser() -> argparse.ArgumentParser:
     parser.add_argument("--public-url")
     parser.add_argument("--oauth-client-id")
     parser.add_argument("--oauth-redirect-uri", action="append", default=[])
-    parser.add_argument("--identity-header")
-    parser.add_argument("--identity-value")
+    parser.add_argument("--owner-login")
     parser.add_argument("--service-user")
     parser.add_argument("--service-name", help="systemd service name, e.g. polaris or polaris.service")
     parser.add_argument("--recovery-command-json")
@@ -110,13 +109,26 @@ def init() -> None:
     if mode != "local" and not public_url and interactive:
         public_url = input("Public HTTPS origin, e.g. https://mapi.example.com: ").strip()
 
-    identity_value = args.identity_value or existing_env.get("MAPI_REMOTE_IDENTITY_VALUE")
+    owner_login = args.owner_login or existing_env.get("MAPI_REMOTE_OWNER_LOGIN") or "owner"
+    owner_password_hash = existing_env.get("MAPI_REMOTE_OWNER_PASSWORD_HASH") or os.environ.get("MAPI_REMOTE_OWNER_PASSWORD_HASH")
     redirects = list(args.oauth_redirect_uri or [])
     if not redirects and existing_env.get("MAPI_REMOTE_OAUTH_REDIRECT_URIS"):
         redirects = [item.strip() for item in existing_env["MAPI_REMOTE_OAUTH_REDIRECT_URIS"].split(",") if item.strip()]
     if mode == "vps-remote-auth" and interactive:
-        if not identity_value:
-            identity_value = input("Trusted authenticated identity value (for proxy-injected header): ").strip()
+        if not args.owner_login and not existing_env.get("MAPI_REMOTE_OWNER_LOGIN"):
+            owner_login = input("Polaris owner login (owner): ").strip() or "owner"
+        if not owner_password_hash:
+            import getpass
+            from app.runtime.owner_credentials import hash_owner_password
+
+            first = getpass.getpass("Polaris owner password: ")
+            second = getpass.getpass("Repeat owner password: ")
+            if first != second:
+                print(json.dumps({"status": "error", "error": "owner_password_confirmation_mismatch"}, indent=2))
+                raise SystemExit(2)
+            owner_password_hash = hash_owner_password(first)
+            first = ""
+            second = ""
         if not redirects:
             raw = input("Allowed OAuth redirect URI(s), comma-separated HTTPS URLs: ").strip()
             redirects = [item.strip() for item in raw.split(",") if item.strip()]
@@ -141,8 +153,8 @@ def init() -> None:
         public_url=public_url,
         oauth_client_id=args.oauth_client_id or existing_env.get("MAPI_REMOTE_OAUTH_CLIENT_ID") or "chatgpt-private",
         oauth_redirect_uris=tuple(redirects),
-        identity_header=args.identity_header or existing_env.get("MAPI_REMOTE_IDENTITY_HEADER") or "cf-access-authenticated-user-email",
-        identity_value=identity_value,
+        owner_login=owner_login,
+        owner_password_hash=owner_password_hash,
         service_user=args.service_user,
         service_name=service_name,
         recovery_command_json=args.recovery_command_json or existing_env.get("MAPI_RECOVERY_COMMAND_JSON"),

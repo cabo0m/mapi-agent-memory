@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.runtime.owner_credentials import hash_owner_password
 from mapi.env import apply_runtime_environment, load_environment_file, parse_environment_file
 from mapi.initialize import InitOptions, initialize_instance, validate_init_options
 
@@ -165,8 +166,17 @@ def test_vps_proxy_init_keeps_runtime_loopback_and_generates_operator_artifacts(
 
 def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> None:
     root = tmp_path / "instance"
+    password_hash = hash_owner_password("a sufficiently long owner password")
     with pytest.raises(ValueError, match="oauth_redirect_allowlist_required"):
-        validate_init_options(_options(root, mode="vps-remote-auth", public_url="https://mapi.example.test", profile="admin"))
+        validate_init_options(
+            _options(
+                root,
+                mode="vps-remote-auth",
+                public_url="https://mapi.example.test",
+                profile="admin",
+                owner_password_hash=password_hash,
+            )
+        )
     with pytest.raises(ValueError, match="public_url_must_be_https_origin"):
         validate_init_options(
             _options(
@@ -174,34 +184,53 @@ def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> No
                 mode="vps-remote-auth",
                 public_url="http://mapi.example.test",
                 oauth_redirect_uris=("https://chat.example/callback",),
-                identity_value="operator@example.test",
+                owner_password_hash=password_hash,
                 profile="admin",
             )
         )
 
 
-def test_remote_auth_init_writes_required_config_but_manifest_does_not_copy_identity_value(tmp_path: Path) -> None:
+def test_remote_auth_requires_owner_password_hash(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="owner_password_hash_required"):
+        validate_init_options(
+            _options(
+                tmp_path / "instance",
+                mode="vps-remote-auth",
+                public_url="https://mapi.example.test",
+                oauth_redirect_uris=("https://chat.example/callback",),
+                profile="admin",
+            )
+        )
+
+
+def test_remote_auth_init_writes_owner_login_and_hash_but_manifest_does_not_copy_hash(tmp_path: Path) -> None:
     root = tmp_path / "instance"
-    identity_value = "operator@example.test"
+    password_hash = hash_owner_password("a sufficiently long owner password")
     result = initialize_instance(
         _options(
             root,
             mode="vps-remote-auth",
             public_url="https://mapi.example.test",
             oauth_redirect_uris=("https://chat.example/callback",),
-            identity_value=identity_value,
-            identity_header="cf-access-authenticated-user-email",
+            owner_login="michal",
+            owner_password_hash=password_hash,
             profile="admin",
         )
     )
     assert result["status"] == "ready_to_start"
     env_text = (root / ".env").read_text(encoding="utf-8")
     manifest_text = (root / "generated" / "mapi-init-manifest.json").read_text(encoding="utf-8")
+    proxy_text = (root / "generated" / "reverse-proxy-security-template.txt").read_text(encoding="utf-8")
     assert "MAPI_REMOTE_AUTH_ENABLED=true" in env_text
     assert "MCP_SURFACE_PROFILE=admin" in env_text
     assert "MAPI_ADMIN_TOOLS_ENABLED=true" in env_text
-    assert identity_value in env_text
-    assert identity_value not in manifest_text
+    assert "MAPI_REMOTE_OWNER_LOGIN=michal" in env_text
+    assert password_hash in env_text
+    assert password_hash not in manifest_text
+    assert "MAPI_REMOTE_IDENTITY_HEADER" not in env_text
+    assert "MAPI_REMOTE_IDENTITY_VALUE" not in env_text
+    assert "do not add Basic Auth" in proxy_text
+    assert "identity-header injection" in proxy_text
     assert "127.0.0.1" in env_text
     assert "remote_auth_enabled" in manifest_text
 
@@ -221,7 +250,7 @@ def test_remote_auth_requires_single_owner_admin_profile(tmp_path: Path) -> None
                 mode="vps-remote-auth",
                 public_url="https://mapi.example.test",
                 oauth_redirect_uris=("https://chat.example/callback",),
-                identity_value="operator@example.test",
+                owner_password_hash=hash_owner_password("a sufficiently long owner password"),
                 profile="agent",
             )
         )

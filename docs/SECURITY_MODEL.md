@@ -24,7 +24,7 @@ Unknown profiles and unknown action requirements fail closed.
 
 ## Dangerous tools
 
-The `admin` workshop includes filesystem, SQL, process and migration functions. It is available locally only with the explicit admin gate, and remotely only to the single OAuth-authenticated owner in `vps-remote-auth` mode. Do not expose it through an unauthenticated reverse proxy.
+The `admin` workshop includes filesystem, SQL, process and migration functions. It is available locally only with the explicit admin gate, and remotely only to the single OAuth-authenticated owner in `vps-remote-auth` mode. Keep the origin loopback-only; the public TLS proxy may forward without a second login because the MCP/OAuth endpoints enforce authentication themselves.
 
 ## Provider trust
 
@@ -39,11 +39,11 @@ Protect the SQLite file and backups with operating-system permissions and encryp
 | Threat | Mitigation |
 |---|---|
 | Profile spoofing in payload | Profiles come from runtime/auth context, never payload |
-| Remote admin exposure | Loopback origin, built-in OAuth, external owner identity boundary, explicit admin gate, single-owner mapping |
+| Remote admin exposure | Loopback origin, built-in OAuth owner login, salted password hash, PKCE, explicit admin gate, single-owner mapping |
 | Destructive lifecycle action | Preview hashes, profile checks, audit and rollback records |
 | Provider hallucination | Proposal-only contract and evidence allowlists |
 | Secret committed to Git | Public audit, `.gitignore`, CI scan |
 | Database copied into release | Exact file manifest and forbidden binary/database rules |
 | Concurrent writers | Writer guard and SQLite single-writer guidance |
 
-Remote authentication is part of the application contract in `vps-remote-auth` mode: one owner OAuth identity maps to `admin`, while the origin remains loopback-only behind HTTPS and the trusted identity boundary.
+Remote authentication is part of the application contract in `vps-remote-auth` mode: one built-in owner login maps through OAuth/PKCE to `admin`. The origin remains loopback-only behind HTTPS; the reverse proxy is not a second authentication layer.

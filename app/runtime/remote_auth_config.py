@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from app.runtime.owner_credentials import valid_owner_password_hash
 from app.runtime.remote_auth_contract import REMOTE_AUTH_OWNER_KEY
 
 
@@ -19,8 +20,11 @@ class RemoteAuthConfig:
     owner_key: str
     oauth_client_id: str
     oauth_redirect_uris: tuple[str, ...]
-    identity_header: str
-    identity_value: str
+    owner_login: str = "owner"
+    owner_password_hash: str = ""
+    # Legacy proxy-identity settings are kept for config compatibility only.
+    identity_header: str = ""
+    identity_value: str = ""
     access_ttl_seconds: int = 900
     refresh_ttl_seconds: int = 30 * 24 * 3600
     authorization_code_ttl_seconds: int = 300
@@ -41,9 +45,9 @@ class RemoteAuthConfig:
             owner_key=str(os.environ.get("MAPI_REMOTE_OWNER_KEY", REMOTE_AUTH_OWNER_KEY)).strip().lower(),
             oauth_client_id=str(os.environ.get("MAPI_REMOTE_OAUTH_CLIENT_ID", "chatgpt-private")).strip(),
             oauth_redirect_uris=_normalize_csv(os.environ.get("MAPI_REMOTE_OAUTH_REDIRECT_URIS")),
-            identity_header=str(
-                os.environ.get("MAPI_REMOTE_IDENTITY_HEADER", "cf-access-authenticated-user-email")
-            ).strip().lower(),
+            owner_login=str(os.environ.get("MAPI_REMOTE_OWNER_LOGIN", "owner")).strip(),
+            owner_password_hash=str(os.environ.get("MAPI_REMOTE_OWNER_PASSWORD_HASH", "")).strip(),
+            identity_header=str(os.environ.get("MAPI_REMOTE_IDENTITY_HEADER", "")).strip().lower(),
             identity_value=str(os.environ.get("MAPI_REMOTE_IDENTITY_VALUE", "")).strip(),
             access_ttl_seconds=max(60, int(os.environ.get("MAPI_REMOTE_ACCESS_TTL_SECONDS", "900"))),
             refresh_ttl_seconds=max(
@@ -73,10 +77,10 @@ class RemoteAuthConfig:
             errors.append("oauth_redirect_allowlist_required")
         if any(not uri.startswith("https://") for uri in self.oauth_redirect_uris):
             errors.append("oauth_redirect_uris_must_use_https")
-        if not self.identity_header:
-            errors.append("identity_header_required")
-        if not self.identity_value:
-            errors.append("identity_value_required")
+        if not self.owner_login:
+            errors.append("owner_login_required")
+        if not valid_owner_password_hash(self.owner_password_hash):
+            errors.append("owner_password_hash_required")
         return errors
 
     def validate_runtime_host(self, host: str) -> list[str]:

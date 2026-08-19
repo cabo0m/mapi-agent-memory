@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import re
 import secrets
@@ -9,11 +10,11 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProvider, TokenVerifier
-from fastmcp.server.dependencies import get_http_headers, get_http_request
+from fastmcp.server.dependencies import get_http_request
 from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
@@ -23,7 +24,11 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.routing import Route
 
+from app.runtime.owner_credentials import verify_owner_password
 from app.runtime.remote_auth_config import RemoteAuthConfig
 from app.runtime.remote_auth_contract import (
     PKCE_CHALLENGE_PATTERN,
@@ -230,6 +235,62 @@ class RemoteAuthStore:
             conn.commit()
             return int(cursor.rowcount or 0) == 1
 
+    def insert_login_challenge(
+        self,
+        *,
+        raw_challenge: str,
+        client_id: str,
+        redirect_uri: str,
+        scopes: Iterable[str],
+        code_challenge: str,
+        state: str | None,
+        expires_at: int,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO remote_auth_login_challenges (
+                    challenge_hash, client_id, redirect_uri, scopes_json,
+                    code_challenge, state, expires_at, created_at, consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    _secret_hash(raw_challenge),
+                    client_id,
+                    redirect_uri,
+                    _json_list(scopes),
+                    code_challenge,
+                    state,
+                    int(expires_at),
+                    _utc_now_iso(),
+                ),
+            )
+            conn.commit()
+
+    def load_login_challenge(self, raw_challenge: str) -> sqlite3.Row | None:
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            return conn.execute(
+                "SELECT * FROM remote_auth_login_challenges WHERE challenge_hash=?",
+                (_secret_hash(raw_challenge),),
+            ).fetchone()
+
+    def consume_login_challenge(self, raw_challenge: str) -> bool:
+        now = _now_epoch()
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            cursor = conn.execute(
+                """
+                UPDATE remote_auth_login_challenges
+                SET consumed_at=?
+                WHERE challenge_hash=? AND consumed_at IS NULL AND expires_at>?
+                """,
+                (_utc_now_iso(), _secret_hash(raw_challenge), now),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0) == 1
+
     def insert_token(
         self,
         *,
@@ -382,33 +443,12 @@ class RemoteAuthStore:
             return len(hashes)
 
 
-IdentityResolver = Callable[[], str | None]
-
-
-def _default_identity_resolver(config: RemoteAuthConfig) -> str | None:
-    try:
-        headers = get_http_headers(include_all=True)
-    except RuntimeError:
-        return None
-    actual = ""
-    for key, value in headers.items():
-        if str(key).strip().lower() == config.identity_header:
-            actual = str(value).strip()
-            break
-    if not actual or not config.identity_value:
-        return None
-    if hmac.compare_digest(actual.casefold(), config.identity_value.casefold()):
-        return config.owner_key
-    return None
-
-
 class PrivateSQLiteOAuthProvider(OAuthProvider):
     def __init__(
         self,
         *,
         config: RemoteAuthConfig,
         db_path: str | Path,
-        identity_resolver: IdentityResolver | None = None,
     ) -> None:
         errors = config.validate()
         if errors:
@@ -426,7 +466,6 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
         )
         self.config = config
         self.store = RemoteAuthStore(db_path)
-        self.identity_resolver = identity_resolver or (lambda: _default_identity_resolver(config))
         self.client = OAuthClientInformationFull(
             client_id=config.oauth_client_id,
             client_name="Private ChatGPT MCP client",
@@ -488,18 +527,6 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
         self._rate_or_raise(bucket=client_id, action="oauth_authorize", channel="oauth")
         if not hmac.compare_digest(client_id, self.config.oauth_client_id):
             raise AuthorizeError(error="unauthorized_client", error_description="unknown_client")
-        identity = self.identity_resolver()
-        if identity != self.config.owner_key:
-            self.store.audit(
-                event_type="oauth_authorize",
-                channel="oauth",
-                outcome="denied",
-                reason_code="identity_denied",
-                client_id=client_id,
-                owner_key=None,
-                profile=None,
-            )
-            raise AuthorizeError(error="access_denied", error_description="private_identity_denied")
         redirect_uri = str(params.redirect_uri)
         if redirect_uri not in self.config.oauth_redirect_uris:
             raise AuthorizeError(error="invalid_request", error_description="redirect_uri_not_allowed")
@@ -522,14 +549,40 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
             raise AuthorizeError(error="invalid_scope", error_description="scope_not_allowed")
         if REMOTE_REQUIRED_SCOPE not in requested_scopes:
             raise AuthorizeError(error="invalid_scope", error_description="required_scope_missing")
-        raw_code = "mapi_ac_" + secrets.token_urlsafe(32)
+
+        raw_challenge = "mapi_login_" + secrets.token_urlsafe(32)
         expires_at = _now_epoch() + self.config.authorization_code_ttl_seconds
-        self.store.insert_authorization_code(
-            raw_code=raw_code,
+        self.store.insert_login_challenge(
+            raw_challenge=raw_challenge,
             client_id=client_id,
             redirect_uri=redirect_uri,
             scopes=requested_scopes,
             code_challenge=str(params.code_challenge),
+            state=params.state,
+            expires_at=expires_at,
+        )
+        self.store.audit(
+            event_type="owner_login_challenge",
+            channel="oauth",
+            outcome="allowed",
+            reason_code="login_challenge_issued",
+            token_hash=_secret_hash(raw_challenge),
+            client_id=client_id,
+            owner_key=self.config.owner_key,
+            profile=REMOTE_OAUTH_PROFILE,
+        )
+        return _append_query(f"{self.config.base_url}/oauth/login", request=raw_challenge)
+
+    def _issue_authorization_code_from_challenge(self, row: sqlite3.Row) -> str:
+        raw_code = "mapi_ac_" + secrets.token_urlsafe(32)
+        expires_at = _now_epoch() + self.config.authorization_code_ttl_seconds
+        scopes = _parse_json_list(row["scopes_json"])
+        self.store.insert_authorization_code(
+            raw_code=raw_code,
+            client_id=str(row["client_id"]),
+            redirect_uri=str(row["redirect_uri"]),
+            scopes=scopes,
+            code_challenge=str(row["code_challenge"]),
             owner_key=self.config.owner_key,
             profile=REMOTE_OAUTH_PROFILE,
             expires_at=expires_at,
@@ -540,12 +593,138 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
             outcome="allowed",
             reason_code="authorization_code_issued",
             token_hash=_secret_hash(raw_code),
-            client_id=client_id,
+            client_id=str(row["client_id"]),
             owner_key=self.config.owner_key,
             profile=REMOTE_OAUTH_PROFILE,
         )
-        return _append_query(redirect_uri, code=raw_code, state=params.state)
+        return _append_query(str(row["redirect_uri"]), code=raw_code, state=row["state"])
 
+    def _login_html(self, *, request_token: str, error: str | None = None) -> str:
+        safe_request = html.escape(str(request_token), quote=True)
+        safe_login = html.escape(self.config.owner_login, quote=True)
+        error_html = (
+            '<div class="error">Nieprawidłowy login lub hasło.</div>' if error else ""
+        )
+        return f"""<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Polaris · logowanie</title>
+<style>
+:root {{ color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }}
+body {{ margin:0; min-height:100vh; display:grid; place-items:center; background:#0f1115; color:#f5f7fb; }}
+.card {{ width:min(420px, calc(100vw - 40px)); padding:32px; border:1px solid #2b3038; border-radius:18px; background:#171a20; box-shadow:0 20px 70px #0008; }}
+h1 {{ margin:0 0 8px; font-size:24px; }}
+p {{ margin:0 0 24px; color:#aeb6c3; line-height:1.45; }}
+label {{ display:block; margin:14px 0 7px; font-size:14px; color:#d7dce5; }}
+input {{ box-sizing:border-box; width:100%; padding:12px 13px; border-radius:10px; border:1px solid #39414d; background:#0f1115; color:#fff; font:inherit; }}
+button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radius:10px; background:#f3f5f7; color:#111318; font-weight:700; cursor:pointer; }}
+.error {{ margin:0 0 16px; padding:10px 12px; border-radius:9px; background:#481d24; color:#ffd9de; font-size:14px; }}
+.small {{ margin-top:18px; font-size:12px; color:#7f8997; }}
+</style>
+</head>
+<body>
+<main class="card">
+<h1>Zaloguj się do Polaris</h1>
+<p>Jedno logowanie autoryzuje połączenie ChatGPT z Twoją instancją MCP.</p>
+{error_html}
+<form method="post" action="/oauth/login" autocomplete="on">
+<input type="hidden" name="request" value="{safe_request}">
+<label for="username">Login</label>
+<input id="username" name="username" type="text" value="{safe_login}" autocomplete="username" required autofocus>
+<label for="password">Hasło</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Zaloguj i połącz z ChatGPT</button>
+</form>
+<div class="small">Polaris · single-owner OAuth admin</div>
+</main>
+</body>
+</html>"""
+
+    def _login_response(self, *, request_token: str, status_code: int = 200, error: str | None = None) -> HTMLResponse:
+        return HTMLResponse(
+            self._login_html(request_token=request_token, error=error),
+            status_code=status_code,
+            headers={
+                "Cache-Control": "no-store",
+                "Pragma": "no-cache",
+                "Referrer-Policy": "no-referrer",
+                "X-Frame-Options": "DENY",
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            },
+        )
+
+    async def _owner_login_route(self, request: Request) -> Response:
+        if request.method == "GET":
+            raw_challenge = str(request.query_params.get("request") or "").strip()
+            row = self.store.load_login_challenge(raw_challenge) if raw_challenge else None
+            if row is None or row["consumed_at"] or int(row["expires_at"]) <= _now_epoch():
+                return HTMLResponse(
+                    "Sesja logowania Polaris wygasła. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
+                    status_code=400,
+                    headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+                )
+            return self._login_response(request_token=raw_challenge)
+
+        form = await request.form()
+        raw_challenge = str(form.get("request") or "").strip()
+        username = str(form.get("username") or "").strip()
+        password = str(form.get("password") or "")
+        row = self.store.load_login_challenge(raw_challenge) if raw_challenge else None
+        if row is None or row["consumed_at"] or int(row["expires_at"]) <= _now_epoch():
+            return HTMLResponse(
+                "Sesja logowania Polaris wygasła. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
+                status_code=400,
+                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+            )
+
+        client_host = request.client.host if request.client else "unknown"
+        bucket = f"{client_host}:{_fingerprint_from_hash(_secret_hash(raw_challenge))}"
+        allowed = self.store.rate_allowed(
+            bucket=bucket,
+            action="owner_login",
+            window_seconds=self.config.rate_limit_window_seconds,
+            max_attempts=min(10, self.config.rate_limit_max_attempts),
+        )
+        login_ok = hmac.compare_digest(username.casefold(), self.config.owner_login.casefold())
+        password_ok = verify_owner_password(password, self.config.owner_password_hash)
+        password = ""
+        if not allowed or not login_ok or not password_ok:
+            self.store.audit(
+                event_type="owner_login",
+                channel="oauth",
+                outcome="denied",
+                reason_code="rate_limited" if not allowed else "invalid_owner_credentials",
+                token_hash=_secret_hash(raw_challenge),
+                client_id=str(row["client_id"]),
+                owner_key=None,
+                profile=None,
+            )
+            return self._login_response(request_token=raw_challenge, status_code=401, error="invalid_credentials")
+
+        if not self.store.consume_login_challenge(raw_challenge):
+            return HTMLResponse(
+                "Sesja logowania Polaris została już wykorzystana. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
+                status_code=400,
+                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+            )
+        self.store.audit(
+            event_type="owner_login",
+            channel="oauth",
+            outcome="allowed",
+            reason_code="owner_authenticated",
+            token_hash=_secret_hash(raw_challenge),
+            client_id=str(row["client_id"]),
+            owner_key=self.config.owner_key,
+            profile=REMOTE_OAUTH_PROFILE,
+        )
+        return RedirectResponse(self._issue_authorization_code_from_challenge(row), status_code=302)
+
+    def get_routes(self, mcp_path: str | None = None) -> list[Route]:
+        routes = list(super().get_routes(mcp_path))
+        routes.append(Route("/oauth/login", endpoint=self._owner_login_route, methods=["GET", "POST"]))
+        return routes
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
@@ -812,13 +991,8 @@ def build_remote_auth_provider(
     *,
     config: RemoteAuthConfig,
     db_path: str | Path,
-    identity_resolver: IdentityResolver | None = None,
 ) -> MultiAuth:
-    oauth = PrivateSQLiteOAuthProvider(
-        config=config,
-        db_path=db_path,
-        identity_resolver=identity_resolver,
-    )
+    oauth = PrivateSQLiteOAuthProvider(config=config, db_path=db_path)
     return MultiAuth(
         server=oauth,
         verifiers=[],
@@ -857,6 +1031,12 @@ def remote_auth_status(
         ensure_remote_auth_schema(conn)
         counts = {
             "authorization_codes": int(conn.execute("SELECT COUNT(*) FROM remote_auth_authorization_codes").fetchone()[0]),
+            "active_login_challenges": int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM remote_auth_login_challenges WHERE consumed_at IS NULL AND expires_at>?",
+                    (_now_epoch(),),
+                ).fetchone()[0]
+            ),
             "active_access_tokens": int(
                 conn.execute(
                     "SELECT COUNT(*) FROM remote_auth_tokens WHERE token_kind='access' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)",
@@ -889,6 +1069,9 @@ def remote_auth_status(
         "oauth": {
             "client_id": resolved.oauth_client_id,
             "redirect_uri_count": len(resolved.oauth_redirect_uris),
+            "owner_login": resolved.owner_login,
+            "owner_login_path": "/oauth/login",
+            "login_ui": "built_in",
             "pkce_method": PKCE_METHOD,
             "dynamic_registration": False,
             "refresh_rotation": True,

@@ -89,7 +89,7 @@ For a VPS, run the wizard and choose `vps-proxy` or `vps-remote-auth`, or use fl
 mapi-init --mode vps-proxy --public-url https://mapi.example.com --service-name polaris
 ```
 
-The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. `--service-name` selects an isolated systemd unit such as `polaris.service` instead of hard-coding `mapi.service`. On an interactive Linux VPS, `mapi-init` offers to install and start the generated service immediately; the default answer is yes. In automation use `--install-service` explicitly. The installer runs `systemctl enable --now`, waits for the local listener, probes the endpoint, and only then runs the final doctor report so the result describes the finished installation. `mapi-init --resume` reuses the verified first backup and refuses identity/runtime reconfiguration.
+The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. In `vps-remote-auth`, first-run also configures the single built-in owner login used by the OAuth authorization flow. `--service-name` selects an isolated systemd unit such as `polaris.service` instead of hard-coding `mapi.service`. On an interactive Linux VPS, `mapi-init` offers to install and start the generated service immediately; the default answer is yes. In automation use `--install-service` explicitly. The installer runs `systemctl enable --now`, waits for the local listener, probes the endpoint, and only then runs the final doctor report so the result describes the finished installation. `mapi-init --resume` reuses the verified first backup and refuses identity/runtime reconfiguration.
 
 At the end, the installer prints the exact connection address, for example:
 
@@ -174,7 +174,7 @@ not promised for every plan or managed workspace.
 
 ### ChatGPT web
 
-The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Use `mapi-init --mode vps-remote-auth` for the supported single-owner remote deployment: the one authenticated owner receives the `admin` profile and the full workshop surface. There is no secondary remote login path. Use `vps-proxy` only when an external authenticated proxy is deliberately supplying the security boundary.
+The web application cannot reach `127.0.0.1` on your computer. Use `mapi-init --mode vps-remote-auth` for the supported single-owner remote deployment. Polaris/MAPI acts as the OAuth authorization server, shows its own owner login page, and maps that one authenticated owner to the `admin` profile and full workshop surface. The reverse proxy terminates TLS and forwards traffic only; do not add Basic Auth or a second identity gateway. Use `vps-proxy` only when an external authenticated proxy is deliberately supplying the security boundary instead of built-in OAuth.
 
 ### Generic MCP client
 

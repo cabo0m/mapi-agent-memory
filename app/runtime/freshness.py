@@ -232,7 +232,12 @@ def runtime_config_contract(*, profile: str | None = None) -> dict[str, Any]:
             "base_url": remote.base_url,
             "oauth_client_id": remote.oauth_client_id,
             "redirect_uri_hashes": redirect_hashes,
-            "identity_header": remote.identity_header,
+            "owner_login": remote.owner_login,
+            "owner_password_hash_fingerprint": (
+                hashlib.sha256(remote.owner_password_hash.encode("utf-8")).hexdigest()
+                if remote.owner_password_hash
+                else None
+            ),
             "access_ttl_seconds": remote.access_ttl_seconds,
             "refresh_ttl_seconds": remote.refresh_ttl_seconds,
             "rate_limit_window_seconds": remote.rate_limit_window_seconds,

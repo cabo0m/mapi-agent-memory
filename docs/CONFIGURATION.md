@@ -14,6 +14,8 @@ The authoritative neutral template is [`.env.example`](../.env.example). `mapi-i
 | `MAPI_SYSTEMD_SERVICE_NAME` | `mapi.service` | no | Persisted VPS systemd unit name; choose a unique name on shared hosts |
 | `MCP_SURFACE_PROFILE` | `agent` | no | Higher profiles expose more mutations |
 | `MAPI_ADMIN_TOOLS_ENABLED` | `false` | no | Must be true before `admin` is effective |
+| `MAPI_REMOTE_OWNER_LOGIN` | `owner` | vps-remote-auth | Login shown by the built-in OAuth owner page |
+| `MAPI_REMOTE_OWNER_PASSWORD_HASH` | generated PBKDF2 hash | vps-remote-auth | Password verifier only; never store the plaintext owner password |
 | `MAPI_OWNER_KEY` | `owner` | no | Single-instance identity namespace |
 | `MAPI_AGENT_SUBJECT_KEY` | `agent` | no | Stable subject key for Agent Self Model |
 | `MAPI_AGENT_DISPLAY_NAME` | `Agent` | no | Display label only; not authorization |
@@ -42,7 +44,7 @@ The generated self-model records are operational evidence from the operator's ex
 
 ## Remote authentication status
 
-Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. The OAuth authorization step must be protected by a trusted external identity boundary and HTTPS; ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider. No private owner values, redirect URIs or identity-provider secrets are included in the repository.
+Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. Polaris/MAPI owns the authorization login page and verifies the owner password against a salted PBKDF2 hash stored in the private instance `.env`; the plaintext password is never stored. The reverse proxy only provides HTTPS and forwarding. Ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider.
 
 ## Agent Self Model
 

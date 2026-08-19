@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
+from app.runtime.owner_credentials import valid_owner_password_hash
 from mapi.backup import ensure_initial_backup
 from mapi.env import default_instance_root, parse_environment_file
 from mapi.system_install import (
@@ -47,7 +48,9 @@ class InitOptions:
     public_url: str | None = None
     oauth_client_id: str = "chatgpt-private"
     oauth_redirect_uris: tuple[str, ...] = ()
-    identity_header: str = "cf-access-authenticated-user-email"
+    owner_login: str = "owner"
+    owner_password_hash: str | None = None
+    identity_header: str = ""
     identity_value: str | None = None
     service_user: str | None = None
     service_name: str = "mapi"
@@ -144,10 +147,10 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
             raise ValueError("oauth_redirect_allowlist_required")
         if any(not uri.startswith("https://") for uri in redirects):
             raise ValueError("oauth_redirect_uris_must_use_https")
-        if not _text(options.identity_value):
-            raise ValueError("remote_identity_value_required")
-        if not _text(options.identity_header):
-            raise ValueError("remote_identity_header_required")
+        if not _text(options.owner_login):
+            raise ValueError("owner_login_required")
+        if not valid_owner_password_hash(options.owner_password_hash):
+            raise ValueError("owner_password_hash_required")
     return {
         "mode": mode,
         "profile": profile,
@@ -157,6 +160,7 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
         "agent_display_name": display_name,
         "public_url": public_url,
         "oauth_redirect_uris": redirects,
+        "owner_login": _text(options.owner_login),
         "service_name": service_name,
     }
 
@@ -236,8 +240,8 @@ def _environment_values(options: InitOptions, validated: Mapping[str, Any]) -> d
                 "MAPI_REMOTE_OWNER_KEY": "owner",
                 "MAPI_REMOTE_OAUTH_CLIENT_ID": _text(options.oauth_client_id) or "chatgpt-private",
                 "MAPI_REMOTE_OAUTH_REDIRECT_URIS": ",".join(validated["oauth_redirect_uris"]),
-                "MAPI_REMOTE_IDENTITY_HEADER": _text(options.identity_header).casefold(),
-                "MAPI_REMOTE_IDENTITY_VALUE": _text(options.identity_value),
+                "MAPI_REMOTE_OWNER_LOGIN": str(validated["owner_login"]),
+                "MAPI_REMOTE_OWNER_PASSWORD_HASH": _text(options.owner_password_hash),
             }
         )
     return values
@@ -267,13 +271,9 @@ def render_systemd_unit(*, root: Path, env_file: Path, service_user: str) -> str
 
 def render_proxy_security_template(*, public_url: str, port: int, remote_auth_enabled: bool) -> str:
     host = urlparse(public_url).netloc
-    auth_note = (
-        "MAPI remote auth is enabled, but the trusted identity header still MUST be injected only by your authenticated proxy/access gateway."
-        if remote_auth_enabled
-        else "MAPI remote auth is disabled. Your reverse proxy/access gateway MUST authenticate every request before proxying it."
-    )
-    return f"""# SECURITY TEMPLATE ONLY. Do not deploy this as an unauthenticated public proxy.\n# {auth_note}\n# TLS must terminate at the authenticated proxy. MAPI itself stays on loopback.\n\n# Example origin: {public_url}\n# Example upstream: 127.0.0.1:{port}\n#\n# Caddy skeleton after you add/verify authentication and trusted header handling:\n# {host} {{\n#     reverse_proxy 127.0.0.1:{port}\n# }}\n"""
-
+    if remote_auth_enabled:
+        return f"""# MAPI owns the OAuth login and token boundary in vps-remote-auth mode.\n# The reverse proxy terminates TLS and forwards traffic only; do not add Basic Auth or identity-header injection.\n# Keep the MAPI origin on loopback.\n\n# Example origin: {public_url}\n# Example upstream: 127.0.0.1:{port}\n#\n# Caddy skeleton:\n# {host} {{\n#     reverse_proxy 127.0.0.1:{port}\n# }}\n"""
+    return f"""# SECURITY TEMPLATE ONLY. MAPI remote auth is disabled in vps-proxy mode.\n# Your reverse proxy/access gateway MUST authenticate every request before proxying it.\n# Keep the MAPI origin on loopback and terminate TLS at the authenticated proxy.\n\n# Example origin: {public_url}\n# Example upstream: 127.0.0.1:{port}\n#\n# {host} {{\n#     # Configure and verify external authentication here.\n#     reverse_proxy 127.0.0.1:{port}\n# }}\n"""
 
 @contextmanager
 def _temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
@@ -389,7 +389,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "MCP_SURFACE_PROFILE", "MAPI_OWNER_KEY", "MAPI_AGENT_SUBJECT_KEY", "MAPI_AGENT_DISPLAY_NAME",
             "MAPI_AGENT_PROJECT_KEY", "MAPI_REMOTE_AUTH_ENABLED", "MAPI_REMOTE_BASE_URL",
             "MAPI_REMOTE_OAUTH_CLIENT_ID", "MAPI_REMOTE_OAUTH_REDIRECT_URIS",
-            "MAPI_REMOTE_IDENTITY_HEADER", "MAPI_REMOTE_IDENTITY_VALUE", "MAPI_SYSTEMD_SERVICE_NAME",
+            "MAPI_REMOTE_OWNER_LOGIN", "MAPI_REMOTE_OWNER_PASSWORD_HASH", "MAPI_SYSTEMD_SERVICE_NAME",
             "MAPI_REPOSITORY_ROOT",
         )
         mismatches = [key for key in guarded_keys if key in existing or key in values if existing.get(key) != values.get(key)]
@@ -493,9 +493,14 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
                     f"sudo systemctl enable --now {service_name}",
                 ]
             )
+        proxy_step = (
+            "Configure TLS reverse proxy using generated template; do not add a second authentication layer."
+            if validated["mode"] == "vps-remote-auth"
+            else "Configure authenticated TLS reverse proxy using generated security template."
+        )
         operator_steps.extend(
             [
-                "Configure authenticated TLS reverse proxy using generated security template.",
+                proxy_step,
                 f"Connect the MCP client to {connection['recommended_mcp_url']} after the public endpoint is reachable.",
             ]
         )
@@ -591,6 +596,6 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "admin_tools_enabled": validated["profile"] == "admin" and validated["mode"] in {"local", "vps-remote-auth"},
             "demo_seeded": False,
             "privileged_system_changes_performed": bool(options.install_service and service_result.get("status") != "not_requested"),
-            "reverse_proxy_auth_required": validated["mode"] != "local",
+            "reverse_proxy_auth_required": validated["mode"] == "vps-proxy",
         },
     }
