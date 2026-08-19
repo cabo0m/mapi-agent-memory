@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -60,3 +60,12 @@ def test_systemd_install_fails_closed_when_enable_fails(tmp_path: Path, monkeypa
     monkeypatch.setattr(system_install, "_privilege_prefix", lambda allow_prompt: [])
     with pytest.raises(RuntimeError, match="systemd_install_failed"):
         install_systemd_service(unit, allow_sudo_prompt=False, runner=runner)
+
+
+def test_systemd_exec_start_preserves_virtualenv_interpreter_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapi.initialize as init_module
+
+    monkeypatch.setattr(init_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(init_module.sys, "executable", "venv-python")
+    assert init_module._systemd_exec_start().startswith('venv-python -c ')
+    assert str(Path.cwd()) not in init_module._systemd_exec_start()

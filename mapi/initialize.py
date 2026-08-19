@@ -221,7 +221,7 @@ def _systemd_exec_start() -> str:
     executable = shutil.which("mapi-server")
     if executable:
         return str(Path(executable).resolve())
-    python = str(Path(sys.executable).resolve())
+    python = sys.executable
     return f'{python} -c "from mapi.cli import server; server()"'
 
 
