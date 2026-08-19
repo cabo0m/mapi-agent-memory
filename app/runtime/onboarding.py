@@ -223,10 +223,37 @@ def build_onboarding_payload(conn: Any) -> dict[str, Any]:
         },
         "answers": answers,
         "assistant_instruction": (
-            "Introduce Polaris briefly, then ask exactly the next onboarding question. "
-            "Do not invent missing answers. Persist each answer with advance_polaris_onboarding."
+            "Introduce Polaris briefly and ask exactly next_question. After the user answers, BEFORE replying, "
+            "you MUST persist that answer through the compact MCP surface: call run_workshop_action with "
+            "area='memory', action='onboarding_advance' and payload containing the current step, the resolved "
+            "answer value and skip=false. Do not merely acknowledge an answer in chat. If the user delegates a "
+            "choice to you, for example asks you to choose your own assistant name, choose a concrete value and "
+            "immediately persist that chosen value before announcing it. Only after the tool succeeds should you "
+            "acknowledge the saved answer and ask the next_question returned by the tool. Do not invent answers "
+            "the user did not provide or delegate."
             if required
             else "Onboarding is finished; continue normal work."
+        ),
+        "next_action": (
+            {
+                "required_before_reply_after_user_answer": True,
+                "tool": "run_workshop_action",
+                "area": "memory",
+                "action": "onboarding_advance",
+                "payload_template": {
+                    "step": step,
+                    "value": "<resolved user answer or delegated assistant choice>",
+                    "skip": False,
+                },
+                "delegated_choice_rule": (
+                    "If the user asks you to choose the assistant name, choose one concrete name and use that exact "
+                    "name as value. Persist it before telling the user the choice."
+                    if step == "agent_name"
+                    else None
+                ),
+            }
+            if required
+            else None
         ),
         "timestamps": {
             "created_at": state["created_at"],

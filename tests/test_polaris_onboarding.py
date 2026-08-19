@@ -50,6 +50,13 @@ def test_first_run_onboarding_names_assistant_and_builds_user_profile(server, mo
     assert onboarding["current_step"] == "agent_name"
     assert onboarding["onboarding_required"] is True
     assert "Jak chcesz" in onboarding["next_question"]
+    assert onboarding["next_action"]["required_before_reply_after_user_answer"] is True
+    assert onboarding["next_action"]["tool"] == "run_workshop_action"
+    assert onboarding["next_action"]["area"] == "memory"
+    assert onboarding["next_action"]["action"] == "onboarding_advance"
+    assert onboarding["next_action"]["payload_template"]["step"] == "agent_name"
+    assert "choose one concrete name" in onboarding["next_action"]["delegated_choice_rule"]
+    assert "BEFORE replying" in onboarding["assistant_instruction"]
 
     step1 = server.advance_polaris_onboarding("agent_name", "Nova")
     assert step1["current_step"] == "user_name"
