@@ -44,7 +44,7 @@ The generated self-model records are operational evidence from the operator's ex
 
 ## Remote authentication status
 
-Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. Polaris/MAPI renders the owner login directly at `/authorize` and verifies the owner password against a salted PBKDF2 hash stored in the private instance `.env`; there is no intermediate login session or challenge record. The plaintext password is never stored. The reverse proxy only provides HTTPS and forwarding. Ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider.
+Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. Polaris/MAPI renders the owner login directly at `/authorize` and verifies the owner password against a salted PBKDF2 hash stored in the private instance `.env`; there is no intermediate login session or challenge record. Dynamic Client Registration is enabled for HTTPS callbacks under `https://chatgpt.com/connector/oauth/`, so ChatGPT can obtain its client ID and register its callback automatically. Static OAuth client/redirect values are optional compatibility fallback only. The plaintext password is never stored. The reverse proxy only provides HTTPS and forwarding. Ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider.
 
 ## Agent Self Model
 

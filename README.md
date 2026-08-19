@@ -174,7 +174,7 @@ not promised for every plan or managed workspace.
 
 ### ChatGPT web
 
-The web application cannot reach `127.0.0.1` on your computer. Use `mapi-init --mode vps-remote-auth` for the supported single-owner remote deployment. Polaris/MAPI acts as the OAuth authorization server, shows the owner login directly at `/authorize`, and maps that one authenticated owner to the `admin` profile and full workshop surface. The reverse proxy terminates TLS and forwards traffic only; do not add Basic Auth or a second identity gateway. Use `vps-proxy` only when an external authenticated proxy is deliberately supplying the security boundary instead of built-in OAuth.
+The web application cannot reach `127.0.0.1` on your computer. Use `mapi-init --mode vps-remote-auth` for the supported single-owner remote deployment. Polaris/MAPI acts as the OAuth authorization server, exposes Dynamic Client Registration for ChatGPT, shows the owner login directly at `/authorize`, and maps that one authenticated owner to the `admin` profile and full workshop surface. In the normal ChatGPT path the customer supplies only the MCP URL and their Polaris login; Client ID and callback are registered automatically. The reverse proxy terminates TLS and forwards traffic only; do not add Basic Auth or a second identity gateway. Use `vps-proxy` only when an external authenticated proxy is deliberately supplying the security boundary instead of built-in OAuth.
 
 ### Generic MCP client
 

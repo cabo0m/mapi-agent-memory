@@ -143,8 +143,6 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
     public_url = _validate_public_url(options.public_url, required=mode != "local")
     redirects = tuple(dict.fromkeys(_text(uri) for uri in options.oauth_redirect_uris if _text(uri)))
     if mode == "vps-remote-auth":
-        if not redirects:
-            raise ValueError("oauth_redirect_allowlist_required")
         if any(not uri.startswith("https://") for uri in redirects):
             raise ValueError("oauth_redirect_uris_must_use_https")
         if not _text(options.owner_login):

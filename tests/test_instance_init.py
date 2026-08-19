@@ -164,19 +164,19 @@ def test_vps_proxy_init_keeps_runtime_loopback_and_generates_operator_artifacts(
     assert result["safety"]["privileged_system_changes_performed"] is False
 
 
-def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> None:
+def test_remote_auth_init_supports_dynamic_registration_without_static_redirect(tmp_path: Path) -> None:
     root = tmp_path / "instance"
     password_hash = hash_owner_password("a sufficiently long owner password")
-    with pytest.raises(ValueError, match="oauth_redirect_allowlist_required"):
-        validate_init_options(
-            _options(
-                root,
-                mode="vps-remote-auth",
-                public_url="https://mapi.example.test",
-                profile="admin",
-                owner_password_hash=password_hash,
-            )
+    validated = validate_init_options(
+        _options(
+            root,
+            mode="vps-remote-auth",
+            public_url="https://mapi.example.test",
+            profile="admin",
+            owner_password_hash=password_hash,
         )
+    )
+    assert validated["oauth_redirect_uris"] == ()
     with pytest.raises(ValueError, match="public_url_must_be_https_origin"):
         validate_init_options(
             _options(
@@ -188,6 +188,28 @@ def test_remote_auth_init_requires_complete_https_boundary(tmp_path: Path) -> No
                 profile="admin",
             )
         )
+
+
+def test_remote_auth_init_generates_dynamic_registration_instance_without_static_callback(tmp_path: Path) -> None:
+    root = tmp_path / "instance"
+    password_hash = hash_owner_password("a sufficiently long owner password")
+    result = initialize_instance(
+        _options(
+            root,
+            mode="vps-remote-auth",
+            public_url="https://mapi.example.test",
+            oauth_redirect_uris=(),
+            owner_login="michal",
+            owner_password_hash=password_hash,
+            profile="admin",
+        )
+    )
+    assert result["status"] == "ready_to_start"
+    env = parse_environment_file(root / ".env")
+    assert env["MAPI_REMOTE_AUTH_ENABLED"] == "true"
+    assert env["MAPI_REMOTE_OAUTH_REDIRECT_URIS"] == ""
+    assert env["MAPI_REMOTE_OWNER_LOGIN"] == "michal"
+    assert env["MAPI_REMOTE_OWNER_PASSWORD_HASH"] == password_hash
 
 
 def test_remote_auth_requires_owner_password_hash(tmp_path: Path) -> None:

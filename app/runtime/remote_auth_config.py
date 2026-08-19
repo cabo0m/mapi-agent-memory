@@ -73,8 +73,6 @@ class RemoteAuthConfig:
             errors.append("remote_base_url_must_use_https")
         if not self.oauth_client_id:
             errors.append("oauth_client_id_required")
-        if not self.oauth_redirect_uris:
-            errors.append("oauth_redirect_allowlist_required")
         if any(not uri.startswith("https://") for uri in self.oauth_redirect_uris):
             errors.append("oauth_redirect_uris_must_use_https")
         if not self.owner_login:

@@ -71,6 +71,116 @@ else:
     assert completed.returncode == 0, completed.stderr
 
 
+def test_dynamic_client_registration_removes_manual_client_id(tmp_path) -> None:
+    code = r'''
+import asyncio
+import base64
+import hashlib
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+from starlette.applications import Starlette
+
+from app.runtime.owner_credentials import hash_owner_password
+from app.runtime.remote_auth import PrivateSQLiteOAuthProvider
+from app.runtime.remote_auth_config import RemoteAuthConfig
+
+BASE = 'https://mapi.example.test'
+REDIRECT = 'https://chatgpt.com/connector/oauth/dcr-test-callback'
+PASSWORD = 'a sufficiently long owner password'
+config = RemoteAuthConfig(
+    enabled=True,
+    base_url=BASE,
+    owner_key='owner',
+    oauth_client_id='chatgpt-private',
+    oauth_redirect_uris=(),
+    owner_login='michal',
+    owner_password_hash=hash_owner_password(PASSWORD),
+)
+provider = PrivateSQLiteOAuthProvider(config=config, db_path='dcr-flow.db')
+app = Starlette(routes=provider.get_routes('/mcp/'))
+
+async def main():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE, follow_redirects=False) as client:
+        metadata = await client.get('/.well-known/oauth-authorization-server')
+        assert metadata.status_code == 200, metadata.text
+        body = metadata.json()
+        assert body['registration_endpoint'] == BASE + '/register'
+
+        denied = await client.post('/register', json={
+            'redirect_uris': ['https://evil.example/callback'],
+            'token_endpoint_auth_method': 'none',
+            'grant_types': ['authorization_code', 'refresh_token'],
+            'response_types': ['code'],
+        })
+        assert denied.status_code == 400, denied.text
+
+        registered = await client.post('/register', json={
+            'redirect_uris': [REDIRECT],
+            'token_endpoint_auth_method': 'none',
+            'grant_types': ['authorization_code', 'refresh_token'],
+            'response_types': ['code'],
+            'scope': 'mapi:read mapi:write mapi:admin offline_access',
+            'client_name': 'ChatGPT',
+        })
+        assert registered.status_code == 201, registered.text
+        registration = registered.json()
+        client_id = registration['client_id']
+        assert client_id
+        assert registration['token_endpoint_auth_method'] == 'none'
+
+        verifier = 'd' * 64
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        params = {
+            'response_type': 'code',
+            'client_id': client_id,
+            'redirect_uri': REDIRECT,
+            'scope': 'mapi:read mapi:write mapi:admin offline_access',
+            'state': 'dcr-state',
+            'code_challenge': challenge,
+            'code_challenge_method': 'S256',
+        }
+
+        login_page = await client.get('/authorize', params=params)
+        assert login_page.status_code == 200, login_page.text
+        assert 'Zaloguj się do Polaris' in login_page.text
+
+        accepted = await client.post('/authorize', data={
+            **params,
+            'username': 'michal',
+            'password': PASSWORD,
+        })
+        assert accepted.status_code == 302, accepted.text
+        callback = urlparse(accepted.headers['location'])
+        query = parse_qs(callback.query)
+        assert f'{callback.scheme}://{callback.netloc}{callback.path}' == REDIRECT
+        assert query['state'] == ['dcr-state']
+
+        token = await client.post('/token', data={
+            'grant_type': 'authorization_code',
+            'code': query['code'][0],
+            'client_id': client_id,
+            'redirect_uri': REDIRECT,
+            'code_verifier': verifier,
+        })
+        assert token.status_code == 200, token.text
+        token_body = token.json()
+        assert token_body['access_token']
+        assert token_body['refresh_token']
+
+asyncio.run(main())
+'''
+    completed = subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_owner_login_is_directly_on_authorize_and_issues_refresh_token(tmp_path) -> None:
     code = r"""
 import asyncio

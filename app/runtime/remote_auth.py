@@ -20,6 +20,7 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     AuthorizeError,
     RefreshToken,
+    RegistrationError,
     TokenError,
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
@@ -99,6 +100,53 @@ class RemoteAuthStore:
         with _connect(self.db_path) as conn:
             ensure_remote_auth_schema(conn)
             conn.commit()
+
+    def save_client(self, client_info: OAuthClientInformationFull) -> None:
+        client_id = str(client_info.client_id or "").strip()
+        if not client_id:
+            raise ValueError("dynamic_client_id_required")
+        payload = client_info.model_dump_json(exclude_none=True)
+        now = _utc_now_iso()
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO remote_auth_clients(client_id, client_json, created_at, last_seen_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(client_id) DO UPDATE SET
+                    client_json=excluded.client_json,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (client_id, payload, now, now),
+            )
+            conn.commit()
+
+    def load_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        normalized = str(client_id or "").strip()
+        if not normalized:
+            return None
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            row = conn.execute(
+                "SELECT client_json FROM remote_auth_clients WHERE client_id=?",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE remote_auth_clients SET last_seen_at=? WHERE client_id=?",
+                (_utc_now_iso(), normalized),
+            )
+            conn.commit()
+        try:
+            return OAuthClientInformationFull.model_validate_json(str(row["client_json"]))
+        except Exception:
+            return None
+
+    def dynamic_client_count(self) -> int:
+        with _connect(self.db_path) as conn:
+            ensure_remote_auth_schema(conn)
+            return int(conn.execute("SELECT COUNT(*) FROM remote_auth_clients").fetchone()[0])
 
     def audit(
         self,
@@ -392,7 +440,7 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
             base_url=config.base_url,
             resource_base_url=config.base_url,
             client_registration_options=ClientRegistrationOptions(
-                enabled=False,
+                enabled=True,
                 valid_scopes=list(REMOTE_OAUTH_SCOPES),
                 default_scopes=list(REMOTE_OAUTH_SCOPES),
             ),
@@ -401,23 +449,82 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
         )
         self.config = config
         self.store = RemoteAuthStore(db_path)
-        self.client = OAuthClientInformationFull(
-            client_id=config.oauth_client_id,
-            client_name="Private ChatGPT MCP client",
-            redirect_uris=list(config.oauth_redirect_uris),
-            token_endpoint_auth_method="none",
-            grant_types=["authorization_code", "refresh_token"],
-            response_types=["code"],
-            scope=" ".join(REMOTE_OAUTH_SCOPES),
-        )
+        self.client = None
+        if config.oauth_redirect_uris:
+            self.client = OAuthClientInformationFull(
+                client_id=config.oauth_client_id,
+                client_name="Private ChatGPT MCP client",
+                redirect_uris=list(config.oauth_redirect_uris),
+                token_endpoint_auth_method="none",
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+                scope=" ".join(REMOTE_OAUTH_SCOPES),
+            )
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        if hmac.compare_digest(str(client_id), self.config.oauth_client_id):
+        if (
+            self.client is not None
+            and hmac.compare_digest(str(client_id), self.config.oauth_client_id)
+        ):
             return self.client
-        return None
+        return self.store.load_client(str(client_id))
+
+    @staticmethod
+    def _dynamic_redirect_allowed(uri: str) -> bool:
+        parsed = urlsplit(str(uri))
+        return (
+            parsed.scheme == "https"
+            and parsed.netloc.casefold() == "chatgpt.com"
+            and parsed.path.startswith("/connector/oauth/")
+            and bool(parsed.path.removeprefix("/connector/oauth/").strip("/"))
+            and not parsed.fragment
+        )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        raise NotImplementedError("dynamic_client_registration_disabled")
+        client_id = str(client_info.client_id or "").strip()
+        redirects = [str(uri) for uri in (client_info.redirect_uris or [])]
+        if not client_id:
+            raise RegistrationError("invalid_client_metadata", "client_id_required")
+        if not redirects or not all(self._dynamic_redirect_allowed(uri) for uri in redirects):
+            raise RegistrationError(
+                "invalid_redirect_uri",
+                "dynamic_registration_allows_only_chatgpt_connector_callbacks",
+            )
+        if client_info.token_endpoint_auth_method not in {
+            "none",
+            "client_secret_post",
+            "client_secret_basic",
+        }:
+            raise RegistrationError(
+                "invalid_client_metadata",
+                "unsupported_token_endpoint_auth_method",
+            )
+        if not {"authorization_code", "refresh_token"}.issubset(
+            set(client_info.grant_types or [])
+        ):
+            raise RegistrationError("invalid_client_metadata", "required_grant_types_missing")
+        if "code" not in set(client_info.response_types or []):
+            raise RegistrationError("invalid_client_metadata", "code_response_type_required")
+        scopes = set(str(client_info.scope or "").split())
+        if scopes and not scopes.issubset(set(REMOTE_OAUTH_SCOPES)):
+            raise RegistrationError("invalid_client_metadata", "scope_not_allowed")
+        if not self.store.rate_allowed(
+            bucket="dynamic-client-registration",
+            action="oauth_client_register",
+            window_seconds=self.config.rate_limit_window_seconds,
+            max_attempts=min(30, self.config.rate_limit_max_attempts),
+        ):
+            raise RegistrationError("invalid_client_metadata", "registration_rate_limited")
+        self.store.save_client(client_info)
+        self.store.audit(
+            event_type="oauth_client_register",
+            channel="oauth",
+            outcome="allowed",
+            reason_code="dynamic_client_registered",
+            client_id=client_id,
+            owner_key=self.config.owner_key,
+            profile=REMOTE_OAUTH_PROFILE,
+        )
 
     def _rate_or_raise(self, *, bucket: str, action: str, channel: str) -> None:
         if self.store.rate_allowed(
@@ -474,7 +581,10 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
         payload = {"error": error, "error_description": description}
         if state is not None:
             payload["state"] = state
-        if redirect_uri and redirect_uri in self.config.oauth_redirect_uris:
+        if redirect_uri and (
+            redirect_uri in self.config.oauth_redirect_uris
+            or self._dynamic_redirect_allowed(redirect_uri)
+        ):
             return RedirectResponse(
                 _append_query(
                     redirect_uri,
@@ -1069,6 +1179,7 @@ def remote_auth_status(
     with _connect(path) as conn:
         ensure_remote_auth_schema(conn)
         counts = {
+            "dynamic_clients": store.dynamic_client_count(),
             "authorization_codes": int(conn.execute("SELECT COUNT(*) FROM remote_auth_authorization_codes").fetchone()[0]),
             "active_access_tokens": int(
                 conn.execute(
@@ -1106,7 +1217,11 @@ def remote_auth_status(
             "owner_login_path": "/authorize",
             "login_ui": "built_in",
             "pkce_method": PKCE_METHOD,
-            "dynamic_registration": False,
+            "dynamic_registration": True,
+            "dynamic_registration_endpoint": "/register",
+            "dynamic_redirect_prefix": "https://chatgpt.com/connector/oauth/",
+            "manual_client_id_required": False,
+            "manual_callback_required": False,
             "refresh_rotation": True,
             "access_ttl_seconds": resolved.access_ttl_seconds,
             "refresh_ttl_seconds": resolved.refresh_ttl_seconds,

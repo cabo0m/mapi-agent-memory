@@ -129,9 +129,6 @@ def init() -> None:
             owner_password_hash = hash_owner_password(first)
             first = ""
             second = ""
-        if not redirects:
-            raw = input("Allowed OAuth redirect URI(s), comma-separated HTTPS URLs: ").strip()
-            redirects = [item.strip() for item in raw.split(",") if item.strip()]
 
     install_service = bool(args.install_service)
     if mode != "local" and not args.install_service and not args.no_install_service and interactive:

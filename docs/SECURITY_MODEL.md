@@ -39,7 +39,7 @@ Protect the SQLite file and backups with operating-system permissions and encryp
 | Threat | Mitigation |
 |---|---|
 | Profile spoofing in payload | Profiles come from runtime/auth context, never payload |
-| Remote admin exposure | Loopback origin, built-in OAuth owner login, salted password hash, PKCE, explicit admin gate, single-owner mapping |
+| Remote admin exposure | Loopback origin, built-in OAuth owner login, salted password hash, PKCE, Dynamic Client Registration restricted to ChatGPT callback URLs, explicit admin gate, single-owner mapping |
 | Destructive lifecycle action | Preview hashes, profile checks, audit and rollback records |
 | Provider hallucination | Proposal-only contract and evidence allowlists |
 | Secret committed to Git | Public audit, `.gitignore`, CI scan |
