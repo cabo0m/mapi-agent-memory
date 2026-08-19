@@ -56,6 +56,8 @@ def test_first_run_onboarding_names_assistant_and_builds_user_profile(server, mo
     assert onboarding["next_action"]["action"] == "onboarding_advance"
     assert onboarding["next_action"]["payload_template"]["step"] == "agent_name"
     assert "choose one concrete name" in onboarding["next_action"]["delegated_choice_rule"]
+    assert "Luna" in onboarding["next_action"]["delegated_choice_rule"]
+    assert "obvious Polaris/space/AI-assistant association" in onboarding["next_action"]["delegated_choice_rule"]
     assert "BEFORE replying" in onboarding["assistant_instruction"]
 
     step1 = server.advance_polaris_onboarding("agent_name", "Nova")

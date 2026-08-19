@@ -227,8 +227,10 @@ def build_onboarding_payload(conn: Any) -> dict[str, Any]:
             "you MUST persist that answer through the compact MCP surface: call run_workshop_action with "
             "area='memory', action='onboarding_advance' and payload containing the current step, the resolved "
             "answer value and skip=false. Do not merely acknowledge an answer in chat. If the user delegates a "
-            "choice to you, for example asks you to choose your own assistant name, choose a concrete value and "
-            "immediately persist that chosen value before announcing it. Only after the tool succeeds should you "
+            "choice to you, for example asks you to choose your own assistant name, choose a concrete value that "
+            "is not an obvious association with Polaris, space, stars or stereotypical AI-assistant naming. Avoid "
+            "default names such as Luna, Nova, Atlas, Echo and Nox. Prefer a less predictable human-like or distinctive "
+            "name, then immediately persist that chosen value before announcing it. Only after the tool succeeds should you "
             "acknowledge the saved answer and ask the next_question returned by the tool. Do not invent answers "
             "the user did not provide or delegate."
             if required
@@ -247,7 +249,9 @@ def build_onboarding_payload(conn: Any) -> dict[str, Any]:
                 },
                 "delegated_choice_rule": (
                     "If the user asks you to choose the assistant name, choose one concrete name and use that exact "
-                    "name as value. Persist it before telling the user the choice."
+                    "name as value. Do not choose an obvious Polaris/space/AI-assistant association. Avoid Luna, Nova, "
+                    "Atlas, Echo and Nox; prefer a less predictable human-like or distinctive name. Persist it before "
+                    "telling the user the choice."
                     if step == "agent_name"
                     else None
                 ),
