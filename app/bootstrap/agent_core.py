@@ -51,13 +51,13 @@ def agent_bootstrap_protocol() -> dict[str, str]:
 
 
 def known_systems_for_project(project_key: str | None) -> list[str]:
-    key = str(project_key or "demo-project").strip() or "demo-project"
-    return [key, "MAPI"]
+    key = str(project_key or "").strip()
+    return [key, "MAPI"] if key else ["MAPI"]
 
 
 def project_purpose_for(project_key: str | None) -> str:
-    key = str(project_key or "demo-project").strip() or "demo-project"
-    return f"Durable agent memory and governance context for {key}."
+    key = str(project_key or "").strip()
+    return f"Durable agent memory and governance context for {key}." if key else "No active project selected."
 
 
 def _compact_bootstrap_row(row: Any, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
@@ -92,8 +92,51 @@ def build_bootstrap_agent_context_payload(
     deployment cannot blend identity/context across projects.
     """
 
-    requested_project = normalize_optional_text(project_key) or "demo-project"
+    requested_project = normalize_optional_text(project_key)
     safe_limit = max(1, min(int(limit or 24), 50))
+    if requested_project is None:
+        return {
+            "status": "ok",
+            "schema": "mapi_agent_bootstrap.v2",
+            "bootstrap_tool": "bootstrap_agent_context",
+            "bootstrap_policy": {
+                "name": "shared_memory_bootstrap_policy_v1",
+                "requested_project_key": None,
+                "project_key": None,
+                "project_key_values": [],
+                "limit": safe_limit,
+                "recent_limit": min(8, safe_limit),
+                "project_anchor_tags": [],
+            },
+            "project": {
+                "requested_project_key": None,
+                "project_key": None,
+                "purpose": "No active project selected.",
+                "known_systems": ["MAPI"],
+            },
+            "current_project": {
+                "requested_project_key": None,
+                "project_key": None,
+                "active_project_key": None,
+                "known_systems": ["MAPI"],
+            },
+            "protocol": agent_bootstrap_protocol(),
+            "recommended_next_calls": agent_recommended_next_calls(),
+            "workshop_index": agent_workshop_index(),
+            "core_memories": [],
+            "core_identity": [],
+            "project_anchors": [],
+            "recent_context": [],
+            "recent_project_context": [],
+            "recent_memories": [],
+            "source_memory_ids": [],
+            "no_project_selected": True,
+            "safety": {
+                "project_scoped": True,
+                "global_identity_loaded": False,
+                "read_only": True,
+            },
+        }
     conn = get_db_connection()
     try:
         canonical_project, project_values = bootstrap_project_key_values(

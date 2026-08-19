@@ -6682,8 +6682,8 @@ def _agent_bootstrap_protocol() -> dict[str, Any]:
 
 
 @mcp.tool
-def bootstrap_agent_context(project_key: str | None = "demo-project", limit: int = 24) -> dict[str, Any]:
-    """Restore MAPI's core identity and current continuity anchors."""
+def bootstrap_agent_context(project_key: str | None = None, limit: int = 24) -> dict[str, Any]:
+    """Restore project-scoped continuity; with no project selected, return an empty neutral bootstrap."""
     return build_bootstrap_agent_context_payload(
         project_key=project_key,
         limit=limit,
@@ -17654,12 +17654,24 @@ def hybrid_search_memories(
 @mcp.tool
 def build_agent_context(
     intent: str,
-    project_key: str = "demo-project",
+    project_key: str | None = None,
     token_budget: int = 2400,
     include_debug: bool = False,
 ) -> dict[str, Any]:
-    """Compose bounded, source-linked context from public MAPI read surfaces."""
-    restore = bootstrap_agent_context(project_key=project_key, limit=12)
+    """Compose bounded, source-linked context for an explicitly selected project."""
+    normalized_project = normalize_optional_text(project_key)
+    if normalized_project is None:
+        return {
+            "status": "blocked",
+            "schema": "mapi_context_engine.v1",
+            "reason": "project_key_required",
+            "requested_project_key": None,
+            "project_key": None,
+            "active_project_key": None,
+            "source_memory_ids": [],
+            "read_only": True,
+        }
+    restore = bootstrap_agent_context(project_key=normalized_project, limit=12)
     self_capsule = get_agent_self_capsule(project_key=None, include_global=True, limit=50, include_content=False)
     restore = dict(restore)
     self_identity = list(self_capsule.get("identity") or [])
@@ -17678,12 +17690,11 @@ def build_agent_context(
     current_project = restore.get("current_project") or {}
     canonical_project_key = (
         normalize_optional_text(current_project.get("project_key"))
-        or normalize_optional_text(project_key)
-        or "demo-project"
+        or normalized_project
     )
     requested_project_key = (
         normalize_optional_text(current_project.get("requested_project_key"))
-        or normalize_optional_text(project_key)
+        or normalized_project
         or canonical_project_key
     )
     retrieval = hybrid_search_memories(
