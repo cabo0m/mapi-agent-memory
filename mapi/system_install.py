@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """Portable service installation and endpoint readiness helpers for MAPI first-run."""
 
@@ -16,6 +16,15 @@ from typing import Any, Callable, Sequence
 
 SYSTEMD_SERVICE_NAME = "mapi.service"
 SYSTEMD_DESTINATION = Path("/etc/systemd/system/mapi.service")
+
+
+def normalize_systemd_service_name(value: str | None) -> str:
+    raw = str(value or "mapi").strip()
+    if raw.endswith(".service"):
+        raw = raw[:-8]
+    if not raw or len(raw) > 128 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@-" for ch in raw):
+        raise ValueError("invalid_systemd_service_name")
+    return raw + ".service"
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,7 @@ def _privilege_prefix(*, allow_prompt: bool) -> list[str]:
 def install_systemd_service(
     unit_path: str | Path,
     *,
+    service_name: str = SYSTEMD_SERVICE_NAME,
     allow_sudo_prompt: bool,
     runner: Callable[[Sequence[str]], CommandResult] = _default_runner,
 ) -> dict[str, Any]:
@@ -65,10 +75,12 @@ def install_systemd_service(
     if not systemd_available():
         raise RuntimeError("systemd_not_available")
     prefix = _privilege_prefix(allow_prompt=allow_sudo_prompt)
+    unit_name = normalize_systemd_service_name(service_name)
+    destination = Path("/etc/systemd/system") / unit_name
     commands = [
-        [*prefix, "install", "-m", "0644", str(source), str(SYSTEMD_DESTINATION)],
+        [*prefix, "install", "-m", "0644", str(source), str(destination)],
         [*prefix, "systemctl", "daemon-reload"],
-        [*prefix, "systemctl", "enable", "--now", SYSTEMD_SERVICE_NAME],
+        [*prefix, "systemctl", "enable", "--now", unit_name],
     ]
     results: list[dict[str, Any]] = []
     for argv in commands:
@@ -84,12 +96,12 @@ def install_systemd_service(
         if result.returncode != 0:
             raise RuntimeError("systemd_install_failed:" + Path(argv[-1]).name)
 
-    status = runner(["systemctl", "is-active", SYSTEMD_SERVICE_NAME])
+    status = runner(["systemctl", "is-active", unit_name])
     active = status.returncode == 0 and status.stdout.strip() == "active"
     return {
         "status": "active" if active else "installed_not_active",
-        "service_name": SYSTEMD_SERVICE_NAME,
-        "unit_destination": str(SYSTEMD_DESTINATION),
+        "service_name": unit_name,
+        "unit_destination": str(destination),
         "active": active,
         "commands": results,
         "status_stdout": status.stdout.strip(),

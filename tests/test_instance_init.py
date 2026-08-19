@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -285,3 +285,82 @@ def test_requested_service_install_failure_blocks_init_but_preserves_connection_
     assert result["status"] == "blocked"
     assert result["system_service"]["status"] == "failed"
     assert result["connection"]["recommended_mcp_url"] == "https://mapi.example.test/mcp/"
+
+
+def test_custom_service_name_flows_through_init_and_generated_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.runtime.doctor as doctor_module
+    import mapi.initialize as init_module
+
+    captured: dict[str, object] = {}
+
+    def install(unit_path, *, service_name, allow_sudo_prompt):
+        captured["unit_path"] = str(unit_path)
+        captured["service_name"] = service_name
+        captured["allow_sudo_prompt"] = allow_sudo_prompt
+        return {"status": "active", "active": True, "service_name": service_name}
+
+    monkeypatch.setattr(init_module, "install_systemd_service", install)
+    monkeypatch.setattr(init_module, "wait_for_listener", lambda host, port: {"status": "ready", "host": host, "port": port})
+    monkeypatch.setattr(doctor_module, "collect_doctor_report", lambda **kwargs: {"status": "READY", "findings": []})
+
+    root = tmp_path / "instance"
+    result = initialize_instance(
+        _options(
+            root,
+            mode="vps-proxy",
+            public_url="https://mapi.example.test",
+            service_name="polaris",
+            install_service=True,
+            verify_endpoint=False,
+        )
+    )
+
+    env = parse_environment_file(root / ".env")
+    assert env["MAPI_SYSTEMD_SERVICE_NAME"] == "polaris.service"
+    assert captured["service_name"] == "polaris.service"
+    assert str(captured["unit_path"]).endswith("polaris.service")
+    assert result["system_service"]["service_name"] == "polaris.service"
+    assert result["artifacts"]["systemd_unit"].endswith("polaris.service")
+    assert result["initial_backup"]["status"] == "created"
+
+
+def test_final_doctor_runs_after_service_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.runtime.doctor as doctor_module
+    import mapi.initialize as init_module
+
+    events: list[str] = []
+
+    def install(*args, **kwargs):
+        events.append("service_started")
+        return {"status": "active", "active": True, "service_name": "mapi.service"}
+
+    def doctor(**kwargs):
+        assert events == ["service_started"]
+        events.append("doctor")
+        return {"status": "READY", "findings": []}
+
+    monkeypatch.setattr(init_module, "install_systemd_service", install)
+    monkeypatch.setattr(init_module, "wait_for_listener", lambda host, port: {"status": "ready", "host": host, "port": port})
+    monkeypatch.setattr(doctor_module, "collect_doctor_report", doctor)
+
+    result = initialize_instance(
+        _options(
+            tmp_path / "instance",
+            mode="vps-proxy",
+            public_url="https://mapi.example.test",
+            install_service=True,
+            verify_endpoint=False,
+        )
+    )
+
+    assert events == ["service_started", "doctor"]
+    assert result["doctor_status"] == "READY"
+
+
+def test_resume_reuses_verified_initial_backup(tmp_path: Path) -> None:
+    root = tmp_path / "instance"
+    first = initialize_instance(_options(root))
+    second = initialize_instance(_options(root, resume=True))
+    assert first["initial_backup"]["status"] == "created"
+    assert second["initial_backup"]["status"] == "existing_verified"
+    assert second["initial_backup"]["path"] == first["initial_backup"]["path"]

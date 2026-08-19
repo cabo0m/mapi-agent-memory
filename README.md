@@ -81,15 +81,15 @@ mapi-init
 mapi-server
 ```
 
-`mapi-init` is the canonical first-run bootstrap. By default it creates a private instance under `~/.mapi-agent-memory`, writes a protected `.env`, creates the SQLite database and directories, applies all migrations, seeds only the explicit neutral Agent Self Model identity/namespace guardrail, runs doctor checks and emits a fingerprinted init manifest. It does **not** seed the product demo and does not perform privileged system changes.
+`mapi-init` is the canonical first-run bootstrap. By default it creates a private instance under `~/.mapi-agent-memory`, writes a protected `.env`, creates the SQLite database and directories, applies all migrations, seeds only the explicit neutral Agent Self Model identity/namespace guardrail, creates and verifies the first SQLite backup, runs final doctor checks and emits a fingerprinted init manifest. It does **not** seed the product demo and does not perform privileged system changes unless service installation is explicitly accepted/requested.
 
 For a VPS, run the wizard and choose `vps-proxy` or `vps-remote-auth`, or use flags such as:
 
 ```bash
-mapi-init --mode vps-proxy --public-url https://mapi.example.com
+mapi-init --mode vps-proxy --public-url https://mapi.example.com --service-name polaris
 ```
 
-The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. On an interactive Linux VPS, `mapi-init` offers to install and start the generated systemd service immediately; the default answer is yes. In automation use `--install-service` explicitly. The installer runs `systemctl enable --now`, waits for the local listener and probes the endpoint. `mapi-init --resume` is idempotent and refuses identity/runtime reconfiguration.
+The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. `--service-name` selects an isolated systemd unit such as `polaris.service` instead of hard-coding `mapi.service`. On an interactive Linux VPS, `mapi-init` offers to install and start the generated service immediately; the default answer is yes. In automation use `--install-service` explicitly. The installer runs `systemctl enable --now`, waits for the local listener, probes the endpoint, and only then runs the final doctor report so the result describes the finished installation. `mapi-init --resume` reuses the verified first backup and refuses identity/runtime reconfiguration.
 
 At the end, the installer prints the exact connection address, for example:
 

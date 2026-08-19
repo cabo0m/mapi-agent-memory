@@ -10,6 +10,7 @@ The authoritative neutral template is [`.env.example`](../.env.example). `mapi-i
 | `MAPI_DB_PATH` | `./data/mapi.db` | no | Direct read access exposes memories |
 | `MAPI_RUNTIME_HOST` | `127.0.0.1` | no | Non-loopback binds require auth and TLS |
 | `MAPI_RUNTIME_PORT` | `8015` | no | Ensure the port is not publicly exposed |
+| `MAPI_SYSTEMD_SERVICE_NAME` | `mapi.service` | no | Persisted VPS systemd unit name; choose a unique name on shared hosts |
 | `MCP_SURFACE_PROFILE` | `agent` | no | Higher profiles expose more mutations |
 | `MAPI_ADMIN_TOOLS_ENABLED` | `false` | no | Must be true before `admin` is effective |
 | `MAPI_OWNER_KEY` | `owner` | no | Single-instance identity namespace |
@@ -32,7 +33,7 @@ Environment variables are process configuration, not authorization. A payload fi
 
 ## First-run configuration
 
-Every initialized instance has a deterministic MCP URL: `http://127.0.0.1:<port>/mcp/` locally, or `<public HTTPS origin>/mcp/` for VPS modes. `mapi-init` and `mapi-server` print the recommended URL. A reported public URL is considered verified only when the endpoint probe succeeds.
+Every initialized instance has a deterministic MCP URL: `http://127.0.0.1:<port>/mcp/` locally, or `<public HTTPS origin>/mcp/` for VPS modes. `mapi-init` and `mapi-server` print the recommended URL. A reported public URL is considered verified only when the endpoint probe succeeds. First-run creates a verified `mapi-initial-*.db` backup before the final doctor report; `--resume` verifies and reuses that artifact instead of creating duplicates.
 
 `mapi-init` owns instance creation. Its generated file is private state and must not be committed. The default instance root is outside the source checkout. Local bootstrap may explicitly enable the admin surface with `--profile admin`. In `vps-remote-auth` mode the deployment is intentionally single-owner: the authenticated owner uses profile `admin`, `MAPI_ADMIN_TOOLS_ENABLED=true`, and there is no second remote login path. Resume never acts as an implicit configuration editor.
 

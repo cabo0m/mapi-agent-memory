@@ -69,3 +69,35 @@ def test_systemd_exec_start_preserves_virtualenv_interpreter_path(monkeypatch: p
     monkeypatch.setattr(init_module.sys, "executable", "venv-python")
     assert init_module._systemd_exec_start().startswith('venv-python -c ')
     assert str(Path.cwd()) not in init_module._systemd_exec_start()
+
+
+def test_systemd_install_supports_custom_service_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    unit = tmp_path / "polaris.service"
+    unit.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv):
+        values = [str(item) for item in argv]
+        calls.append(values)
+        if values[-2:] == ["is-active", "polaris.service"]:
+            return CommandResult(tuple(values), 0, "active\n", "")
+        return CommandResult(tuple(values), 0, "", "")
+
+    monkeypatch.setattr(system_install, "systemd_available", lambda: True)
+    monkeypatch.setattr(system_install, "_privilege_prefix", lambda allow_prompt: [])
+    result = install_systemd_service(
+        unit,
+        service_name="polaris",
+        allow_sudo_prompt=False,
+        runner=runner,
+    )
+
+    assert result["service_name"] == "polaris.service"
+    assert result["unit_destination"].replace("\\", "/") == "/etc/systemd/system/polaris.service"
+    assert calls[2] == ["systemctl", "enable", "--now", "polaris.service"]
+    assert calls[3] == ["systemctl", "is-active", "polaris.service"]
+
+
+def test_invalid_systemd_service_name_is_rejected() -> None:
+    with pytest.raises(ValueError, match="invalid_systemd_service_name"):
+        system_install.normalize_systemd_service_name("../wrong")

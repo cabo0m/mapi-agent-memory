@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
+from mapi.backup import ensure_initial_backup
 from mapi.env import default_instance_root, parse_environment_file
 from mapi.system_install import (
     install_systemd_service,
     mcp_connection_urls,
+    normalize_systemd_service_name,
     probe_http_endpoint,
     wait_for_listener,
 )
@@ -47,6 +49,7 @@ class InitOptions:
     identity_header: str = "cf-access-authenticated-user-email"
     identity_value: str | None = None
     service_user: str | None = None
+    service_name: str = "mapi"
     recovery_command_json: str | None = None
     resume: bool = False
     seed_self: bool = True
@@ -99,6 +102,7 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
         raise ValueError("single_owner_remote_auth_requires_admin_profile")
     if not 1 <= int(options.port) <= 65535:
         raise ValueError("invalid_runtime_port")
+    service_name = normalize_systemd_service_name(options.service_name)
     owner_key = _validated_identifier(options.owner_key, "owner_key")
     subject_key = _validated_identifier(options.agent_subject_key, "agent_subject_key")
     project_key = _validated_identifier(options.agent_project_key, "agent_project_key")
@@ -128,6 +132,7 @@ def validate_init_options(options: InitOptions) -> dict[str, Any]:
         "agent_display_name": display_name,
         "public_url": public_url,
         "oauth_redirect_uris": redirects,
+        "service_name": service_name,
     }
 
 
@@ -191,6 +196,7 @@ def _environment_values(options: InitOptions, validated: Mapping[str, Any]) -> d
         "MAPI_LOG_LEVEL": "INFO",
         "MAPI_REQUEST_TIMEOUT_SECONDS": "30",
         "MAPI_REMOTE_AUTH_ENABLED": "true" if remote_enabled else "false",
+        "MAPI_SYSTEMD_SERVICE_NAME": str(validated["service_name"]),
     }
     if options.recovery_command_json:
         values["MAPI_RECOVERY_COMMAND_JSON"] = options.recovery_command_json
@@ -355,7 +361,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "MCP_SURFACE_PROFILE", "MAPI_OWNER_KEY", "MAPI_AGENT_SUBJECT_KEY", "MAPI_AGENT_DISPLAY_NAME",
             "MAPI_AGENT_PROJECT_KEY", "MAPI_REMOTE_AUTH_ENABLED", "MAPI_REMOTE_BASE_URL",
             "MAPI_REMOTE_OAUTH_CLIENT_ID", "MAPI_REMOTE_OAUTH_REDIRECT_URIS",
-            "MAPI_REMOTE_IDENTITY_HEADER", "MAPI_REMOTE_IDENTITY_VALUE",
+            "MAPI_REMOTE_IDENTITY_HEADER", "MAPI_REMOTE_IDENTITY_VALUE", "MAPI_SYSTEMD_SERVICE_NAME",
         )
         mismatches = [key for key in guarded_keys if key in existing or key in values if existing.get(key) != values.get(key)]
         if mismatches:
@@ -371,7 +377,8 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
     migration_versions: list[str] = []
     migration_tail: str | None = None
     self_memory_ids: list[int] = []
-    doctor: dict[str, Any]
+    doctor: dict[str, Any] = {"status": "ATTENTION", "findings": []}
+    initial_backup: dict[str, Any]
     try:
         with _temporary_environment(values):
             configure_runtime_context(root=root, data_dir=Path(values["MAPI_DATA_DIR"]), db_path=db_path)
@@ -397,9 +404,10 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
                 if errors:
                     raise RuntimeError("remote_auth_config_invalid:" + ",".join(errors))
 
-            from app.runtime.doctor import collect_doctor_report
-
-            doctor = collect_doctor_report(root=root, db_path=db_path, deep=False)
+            initial_backup = ensure_initial_backup(
+                db_path=db_path,
+                backup_dir=Path(values["MAPI_BACKUP_DIR"]),
+            )
     finally:
         configure_runtime_context(
             root=previous_context.root,
@@ -420,7 +428,8 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
 
     if validated["mode"] != "local":
         service_user = _text(options.service_user) or getpass.getuser()
-        systemd_path = generated_dir / "mapi.service"
+        service_name = str(validated["service_name"])
+        systemd_path = generated_dir / service_name
         proxy_path = generated_dir / "reverse-proxy-security-template.txt"
         _write_atomic(systemd_path, render_systemd_unit(root=root, env_file=env_file, service_user=service_user))
         _write_atomic(
@@ -436,6 +445,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             try:
                 service_result = install_systemd_service(
                     systemd_path,
+                    service_name=service_name,
                     allow_sudo_prompt=bool(options.allow_sudo_prompt),
                 )
             except RuntimeError as exc:
@@ -449,9 +459,9 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         else:
             operator_steps.extend(
                 [
-                    f"sudo cp {systemd_path} /etc/systemd/system/mapi.service",
+                    f"sudo cp {systemd_path} /etc/systemd/system/{service_name}",
                     "sudo systemctl daemon-reload",
-                    "sudo systemctl enable --now mapi.service",
+                    f"sudo systemctl enable --now {service_name}",
                 ]
             )
         operator_steps.extend(
@@ -466,6 +476,21 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
                 "Run mapi-server.",
                 f"Connect the MCP client to {connection['recommended_mcp_url']}.",
             ]
+        )
+
+    from app.runtime.context import get_runtime_context, configure_runtime_context
+    from app.runtime.doctor import collect_doctor_report
+
+    doctor_previous_context = get_runtime_context()
+    try:
+        with _temporary_environment(values):
+            configure_runtime_context(root=root, data_dir=Path(values["MAPI_DATA_DIR"]), db_path=db_path)
+            doctor = collect_doctor_report(root=root, db_path=db_path, deep=False)
+    finally:
+        configure_runtime_context(
+            root=doctor_previous_context.root,
+            data_dir=doctor_previous_context.data_dir,
+            db_path=doctor_previous_context.db_path,
         )
 
     connection_status = "configured"
@@ -493,11 +518,17 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             "display_name": validated["agent_display_name"],
             "project_key": validated["agent_project_key"],
         },
-        "runtime": {"host": "127.0.0.1", "port": int(options.port), "profile": validated["profile"]},
+        "runtime": {
+            "host": "127.0.0.1",
+            "port": int(options.port),
+            "profile": validated["profile"],
+            "systemd_service": validated["service_name"],
+        },
         "remote_auth_enabled": validated["mode"] == "vps-remote-auth",
         "public_url": validated.get("public_url"),
         "connection": connection,
         "self_memory_ids": self_memory_ids,
+        "initial_backup": initial_backup,
         "artifacts": artifacts,
     }
     manifest = {**manifest_core, "fingerprint": _manifest_fingerprint(manifest_core)}
@@ -518,6 +549,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         "migrations_applied_now": migration_versions,
         "migration_tail": migration_tail,
         "self_memory_ids": self_memory_ids,
+        "initial_backup": initial_backup,
         "doctor_status": doctor.get("status"),
         "doctor_findings": doctor.get("findings") or [],
         "connection": connection,

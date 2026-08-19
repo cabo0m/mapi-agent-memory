@@ -64,6 +64,7 @@ def _init_parser() -> argparse.ArgumentParser:
     parser.add_argument("--identity-header")
     parser.add_argument("--identity-value")
     parser.add_argument("--service-user")
+    parser.add_argument("--service-name", help="systemd service name, e.g. polaris or polaris.service")
     parser.add_argument("--recovery-command-json")
     parser.add_argument("--resume", action="store_true", help="Resume an existing init without duplicating self seeds")
     parser.add_argument("--no-self-seed", action="store_true", help="Do not create neutral Agent Self Model bootstrap records")
@@ -103,6 +104,7 @@ def init() -> None:
     project = args.agent_project_key or existing_env.get("MAPI_AGENT_PROJECT_KEY") or f"{subject}-self"
     port = args.port if args.port is not None else int(existing_env.get("MAPI_RUNTIME_PORT", "8015"))
     profile = args.profile or existing_env.get("MCP_SURFACE_PROFILE") or ("admin" if mode == "vps-remote-auth" else "agent")
+    service_name = args.service_name or existing_env.get("MAPI_SYSTEMD_SERVICE_NAME") or "mapi"
 
     public_url = args.public_url or existing_env.get("MAPI_REMOTE_BASE_URL")
     if mode != "local" and not public_url and interactive:
@@ -142,6 +144,7 @@ def init() -> None:
         identity_header=args.identity_header or existing_env.get("MAPI_REMOTE_IDENTITY_HEADER") or "cf-access-authenticated-user-email",
         identity_value=identity_value,
         service_user=args.service_user,
+        service_name=service_name,
         recovery_command_json=args.recovery_command_json or existing_env.get("MAPI_RECOVERY_COMMAND_JSON"),
         resume=bool(args.resume),
         seed_self=not bool(args.no_self_seed),

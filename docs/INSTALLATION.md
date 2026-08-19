@@ -45,7 +45,7 @@ mapi-init
 mapi-server
 ```
 
-`mapi-init` is the supported day-zero path. The interactive wizard defaults to a local instance. It stores persistent runtime state outside the source checkout at `~/.mapi-agent-memory`, generates the runtime `.env`, creates data/backup/log directories, applies migrations, records only explicit neutral self-model bootstrap evidence and runs doctor checks. It never seeds demo data.
+`mapi-init` is the supported day-zero path. The interactive wizard defaults to a local instance. It stores persistent runtime state outside the source checkout at `~/.mapi-agent-memory`, generates the runtime `.env`, creates data/backup/log directories, applies migrations, records only explicit neutral self-model bootstrap evidence, creates a verified SQLite-consistent first backup and runs final doctor checks. It never seeds demo data.
 
 For automation, use `--non-interactive` plus explicit flags. For example:
 
@@ -56,12 +56,12 @@ mapi-init --non-interactive --mode local --agent-name MyAgent
 For a server behind an authenticated TLS proxy:
 
 ```bash
-mapi-init --mode vps-proxy --public-url https://mapi.example.com
+mapi-init --mode vps-proxy --public-url https://mapi.example.com --service-name polaris
 ```
 
-The VPS bootstrap generates `generated/mapi.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. On interactive Linux it offers to install and start the systemd service immediately using `sudo` when required. For non-interactive provisioning add `--install-service`; without that flag no privileged change is attempted. Firewall, DNS and the authenticated TLS proxy remain separate infrastructure boundaries.
+The VPS bootstrap generates `generated/<service-name>.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. The default service name is `mapi.service`; use `--service-name polaris` (or another safe systemd name) when multiple instances or existing services share a host. On interactive Linux it offers to install and start the selected systemd service immediately using `sudo` when required. For non-interactive provisioning add `--install-service`; without that flag no privileged change is attempted. Firewall, DNS and the authenticated TLS proxy remain separate infrastructure boundaries.
 
-After service installation MAPI waits for `127.0.0.1:<port>` and probes the MCP URL. The final JSON contains `connection.recommended_mcp_url`, and the terminal prints `MAPI MCP address: ...`. Public reachability is reported separately, so a missing proxy cannot be mistaken for a working public endpoint.
+After service installation MAPI waits for `127.0.0.1:<port>` and probes the MCP URL. Only after the start/probe phase does it run the final doctor report. The final JSON contains `connection.recommended_mcp_url`, `initial_backup`, and the selected system service. Public reachability is reported separately, so a missing proxy cannot be mistaken for a working public endpoint.
 
 Use `mapi-init --resume` only to finish the same initialization. Resume is idempotent and fails if identity, project namespace, profile, port or remote-auth configuration differs from the existing `.env`. Configuration changes are deliberately not an init side effect.
 
