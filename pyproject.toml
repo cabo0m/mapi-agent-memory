@@ -38,6 +38,7 @@ dev = [
 ]
 
 [project.scripts]
+mapi-init = "mapi.cli:init"
 mapi-server = "mapi.cli:server"
 mapi-migrate = "mapi.cli:migrate"
 mapi-doctor = "mapi.cli:doctor"

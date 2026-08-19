@@ -25,6 +25,8 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e ".[dev]"
+      - name: Bootstrap fresh instance
+        run: mapi-init --non-interactive --root "${{ runner.temp }}/mapi-init-${{ matrix.os }}-${{ matrix.python }}" --agent-name CI-Agent
       - run: mapi-migrate
         env:
           MAPI_DB_PATH: ${{ runner.temp }}/mapi-core-${{ matrix.os }}-${{ matrix.python }}.db

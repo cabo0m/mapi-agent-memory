@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app import db_migrations
-from app.memory_config import DB_PATH
+from mapi.env import apply_runtime_environment, default_instance_root, parse_environment_file
 
 
 def _module_available(name: str) -> bool:
@@ -19,11 +20,127 @@ def _module_available(name: str) -> bool:
         return False
 
 
+
+def _runtime_root_arg() -> Path | None:
+    args = sys.argv[1:]
+    for index, token in enumerate(args):
+        if token in {"--root", "--instance-root"}:
+            if index + 1 >= len(args):
+                raise SystemExit("--root requires a path")
+            return Path(args[index + 1]).expanduser().resolve()
+        if token.startswith("--root=") or token.startswith("--instance-root="):
+            return Path(token.split("=", 1)[1]).expanduser().resolve()
+    return None
+
+
+def _apply_runtime_cli_environment() -> dict[str, Any]:
+    root = _runtime_root_arg()
+    if root is not None:
+        os.environ["MAPI_ROOT"] = str(root)
+        os.environ["MAPI_ENV_FILE"] = str(root / ".env")
+    return apply_runtime_environment()
+
 def _database_path() -> Path:
-    path = Path(os.environ.get("MAPI_DB_PATH", DB_PATH)).expanduser().resolve()
+    runtime = _apply_runtime_cli_environment()
+    path = Path(runtime["db_path"]).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
+
+
+def _init_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Initialize a fresh MAPI instance safely")
+    parser.add_argument("--root", type=Path, default=default_instance_root(), help="Instance root; defaults to ~/.mapi-agent-memory")
+    parser.add_argument("--mode", choices=("local", "vps-proxy", "vps-remote-auth"))
+    parser.add_argument("--owner-key")
+    parser.add_argument("--agent-subject-key")
+    parser.add_argument("--agent-name")
+    parser.add_argument("--agent-project-key")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--profile", choices=("reader", "agent", "maintainer", "admin"))
+    parser.add_argument("--public-url")
+    parser.add_argument("--oauth-client-id")
+    parser.add_argument("--oauth-redirect-uri", action="append", default=[])
+    parser.add_argument("--identity-header")
+    parser.add_argument("--identity-value")
+    parser.add_argument("--service-user")
+    parser.add_argument("--recovery-command-json")
+    parser.add_argument("--resume", action="store_true", help="Resume an existing init without duplicating self seeds")
+    parser.add_argument("--no-self-seed", action="store_true", help="Do not create neutral Agent Self Model bootstrap records")
+    parser.add_argument("--non-interactive", action="store_true", help="Never prompt; use flags/defaults or fail closed")
+    return parser
+
+
+def init() -> None:
+    from mapi.initialize import InitOptions, initialize_instance, slugify_identity
+
+    args = _init_parser().parse_args()
+    interactive = bool(sys.stdin.isatty()) and not args.non_interactive
+    existing_env: dict[str, str] = {}
+    existing_env_path = args.root.expanduser().resolve() / ".env"
+    if args.resume and existing_env_path.exists():
+        existing_env = parse_environment_file(existing_env_path)
+
+    mode = args.mode
+    if mode is None and existing_env:
+        remote_enabled = existing_env.get("MAPI_REMOTE_AUTH_ENABLED", "false").casefold() in {"1", "true", "yes", "on"}
+        mode = "vps-remote-auth" if remote_enabled else ("vps-proxy" if existing_env.get("MAPI_REMOTE_BASE_URL") else "local")
+    if mode is None and interactive:
+        mode = input("Deployment mode [local/vps-proxy/vps-remote-auth] (local): ").strip() or "local"
+    mode = mode or "local"
+
+    display_name = args.agent_name or existing_env.get("MAPI_AGENT_DISPLAY_NAME")
+    if not display_name and interactive:
+        display_name = input("Agent display name (Agent): ").strip() or "Agent"
+    display_name = display_name or "Agent"
+    subject = args.agent_subject_key or existing_env.get("MAPI_AGENT_SUBJECT_KEY") or slugify_identity(display_name)
+    owner = args.owner_key or existing_env.get("MAPI_OWNER_KEY") or subject
+    project = args.agent_project_key or existing_env.get("MAPI_AGENT_PROJECT_KEY") or f"{subject}-self"
+    port = args.port if args.port is not None else int(existing_env.get("MAPI_RUNTIME_PORT", "8015"))
+    profile = args.profile or existing_env.get("MCP_SURFACE_PROFILE") or "agent"
+
+    public_url = args.public_url or existing_env.get("MAPI_REMOTE_BASE_URL")
+    if mode != "local" and not public_url and interactive:
+        public_url = input("Public HTTPS origin, e.g. https://mapi.example.com: ").strip()
+
+    identity_value = args.identity_value or existing_env.get("MAPI_REMOTE_IDENTITY_VALUE")
+    redirects = list(args.oauth_redirect_uri or [])
+    if not redirects and existing_env.get("MAPI_REMOTE_OAUTH_REDIRECT_URIS"):
+        redirects = [item.strip() for item in existing_env["MAPI_REMOTE_OAUTH_REDIRECT_URIS"].split(",") if item.strip()]
+    if mode == "vps-remote-auth" and interactive:
+        if not identity_value:
+            identity_value = input("Trusted authenticated identity value (for proxy-injected header): ").strip()
+        if not redirects:
+            raw = input("Allowed OAuth redirect URI(s), comma-separated HTTPS URLs: ").strip()
+            redirects = [item.strip() for item in raw.split(",") if item.strip()]
+
+    options = InitOptions(
+        root=args.root,
+        mode=mode,
+        owner_key=owner,
+        agent_subject_key=subject,
+        agent_display_name=display_name,
+        agent_project_key=project,
+        port=port,
+        profile=profile,
+        public_url=public_url,
+        oauth_client_id=args.oauth_client_id or existing_env.get("MAPI_REMOTE_OAUTH_CLIENT_ID") or "chatgpt-private",
+        oauth_redirect_uris=tuple(redirects),
+        identity_header=args.identity_header or existing_env.get("MAPI_REMOTE_IDENTITY_HEADER") or "cf-access-authenticated-user-email",
+        identity_value=identity_value,
+        service_user=args.service_user,
+        recovery_command_json=args.recovery_command_json or existing_env.get("MAPI_RECOVERY_COMMAND_JSON"),
+        resume=bool(args.resume),
+        seed_self=not bool(args.no_self_seed),
+    )
+    try:
+        result = initialize_instance(options)
+    except (ValueError, RuntimeError) as exc:
+        print(json.dumps({"status": "error", "schema": "mapi_instance_init.v1", "error": str(exc)}, indent=2))
+        raise SystemExit(2) from None
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("status") == "blocked":
+        raise SystemExit(2)
 
 def migrate() -> None:
     path = _database_path()
@@ -46,6 +163,7 @@ def migrate() -> None:
 
 
 def doctor() -> None:
+    _apply_runtime_cli_environment()
     from app.runtime.doctor import collect_doctor_report
 
     deep = "--deep" in sys.argv[1:]
@@ -56,6 +174,7 @@ def doctor() -> None:
 
 
 def recover() -> None:
+    _apply_runtime_cli_environment()
     from app.runtime.recovery import recover_runtime
 
     execute = "--execute" in sys.argv[1:]
@@ -79,6 +198,7 @@ def demo() -> None:
 
 
 def server() -> None:
+    _apply_runtime_cli_environment()
     os.environ.setdefault("MCP_SURFACE_PROFILE", "agent")
     os.environ.setdefault("MAPI_RUNTIME_HOST", "127.0.0.1")
     from app.runtime.server_runtime import run_server

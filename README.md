@@ -67,10 +67,7 @@ Windows PowerShell:
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -e .
-mapi-migrate
-mapi-seed-demo
-mapi-doctor
-mapi-recover
+mapi-init
 mapi-server
 ```
 
@@ -80,12 +77,21 @@ Linux:
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -e .
-mapi-migrate
-mapi-seed-demo
-mapi-doctor
-mapi-recover
+mapi-init
 mapi-server
 ```
+
+`mapi-init` is the canonical first-run bootstrap. By default it creates a private instance under `~/.mapi-agent-memory`, writes a protected `.env`, creates the SQLite database and directories, applies all migrations, seeds only the explicit neutral Agent Self Model identity/namespace guardrail, runs doctor checks and emits a fingerprinted init manifest. It does **not** seed the product demo and does not perform privileged system changes.
+
+For a VPS, run the wizard and choose `vps-proxy` or `vps-remote-auth`, or use flags such as:
+
+```bash
+mapi-init --mode vps-proxy --public-url https://mapi.example.com
+```
+
+The VPS modes keep MAPI bound to `127.0.0.1` and generate a systemd unit plus a reverse-proxy security template. Installing the unit and configuring authenticated TLS remain explicit operator steps. `mapi-init --resume` is idempotent and refuses identity/runtime reconfiguration.
+
+Operational commands load the generated instance automatically from the default root. For a custom root, pass the same path explicitly, for example `mapi-doctor --root <instance-root>`, `mapi-server --root <instance-root>` or `mapi-recover --root <instance-root>`. `mapi-doctor` is the canonical health report; `mapi-recover` is preview-first unless `--execute` is explicitly requested.
 
 The verified local endpoint is:
 
@@ -93,7 +99,7 @@ The verified local endpoint is:
 http://127.0.0.1:8015/mcp/
 ```
 
-The quickstart performs no external model calls and downloads no model. In another activated shell, verify the protocol:
+The first-run bootstrap performs no external model calls and downloads no model. After starting MAPI, verify the protocol from the source checkout:
 
 ```bash
 python scripts/smoke_mcp.py
@@ -158,7 +164,7 @@ not promised for every plan or managed workspace.
 
 ### ChatGPT web
 
-The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Never expose the admin surface remotely; this quickstart is not a public-hosting tutorial.
+The web application cannot reach `127.0.0.1` on your computer. It needs a remotely deployed HTTPS endpoint with authentication. Use `mapi-init --mode vps-proxy` or `mapi-init --mode vps-remote-auth` as the first-run starting point, then complete the generated authenticated TLS proxy steps. Never expose the admin surface remotely.
 
 ### Generic MCP client
 

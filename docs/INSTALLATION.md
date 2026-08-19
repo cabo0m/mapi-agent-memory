@@ -38,16 +38,32 @@ For tests and lint:
 pip install -e ".[dev]"
 ```
 
-## Initialize
+## Initialize a fresh instance
 
 ```bash
-mapi-migrate
-mapi-seed-demo
-mapi-doctor
+mapi-init
 mapi-server
 ```
 
-In another activated shell, run `python scripts/smoke_mcp.py` and `mapi-demo`.
+`mapi-init` is the supported day-zero path. The interactive wizard defaults to a local instance. It stores persistent runtime state outside the source checkout at `~/.mapi-agent-memory`, generates the runtime `.env`, creates data/backup/log directories, applies migrations, records only explicit neutral self-model bootstrap evidence and runs doctor checks. It never seeds demo data.
+
+For automation, use `--non-interactive` plus explicit flags. For example:
+
+```bash
+mapi-init --non-interactive --mode local --agent-name MyAgent
+```
+
+For a server behind an authenticated TLS proxy:
+
+```bash
+mapi-init --mode vps-proxy --public-url https://mapi.example.com
+```
+
+The VPS bootstrap generates `generated/mapi.service` and `generated/reverse-proxy-security-template.txt` inside the instance root. It does not copy files into `/etc`, enable services, modify firewall rules or install a proxy. Review and execute the returned operator steps explicitly.
+
+Use `mapi-init --resume` only to finish the same initialization. Resume is idempotent and fails if identity, project namespace, profile, port or remote-auth configuration differs from the existing `.env`. Configuration changes are deliberately not an init side effect.
+
+After the runtime starts, run `python scripts/smoke_mcp.py`. Run `mapi-demo` separately when you want fictional product-demo data. If you choose a non-default instance root, pass `--root <path>` to runtime CLI commands such as `mapi-server`, `mapi-doctor`, `mapi-migrate`, `mapi-recover` and `mapi-seed-demo`.
 
 ## Optional extras
 

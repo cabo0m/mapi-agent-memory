@@ -1,10 +1,12 @@
 # Configuration
 
-The authoritative neutral template is [`.env.example`](../.env.example). The core quickstart does not require an environment file.
+The authoritative neutral template is [`.env.example`](../.env.example). `mapi-init` generates the effective private `.env` for a new instance, normally under `~/.mapi-agent-memory`. Runtime commands load that file automatically; explicit process environment variables take precedence.
 
 | Variable | Default | Required | Security impact |
 |---|---|---:|---|
-| `MAPI_DATA_DIR` | `./data` | no | Contains private agent data |
+| `MAPI_INSTANCE_ROOT` | `~/.mapi-agent-memory` | no | Discovery root for the generated instance `.env` |
+| `MAPI_ROOT` | instance root | no | Runtime root used for relative paths and generated state |
+| `MAPI_DATA_DIR` | `<root>/data` | no | Contains private agent data |
 | `MAPI_DB_PATH` | `./data/mapi.db` | no | Direct read access exposes memories |
 | `MAPI_RUNTIME_HOST` | `127.0.0.1` | no | Non-loopback binds require auth and TLS |
 | `MAPI_RUNTIME_PORT` | `8015` | no | Ensure the port is not publicly exposed |
@@ -20,12 +22,19 @@ The authoritative neutral template is [`.env.example`](../.env.example). The cor
 | `MAPI_GEMINI_ENABLED` | `false` | no | Enables external provider eligibility |
 | `MAPI_LOCAL_MODEL_ENABLED` | `false` | no | Enables local provider eligibility |
 | `MAPI_LOCAL_MODEL_URL` | loopback | no | Do not point at untrusted endpoints |
+| `MAPI_LOG_DIR` | `<root>/logs` | no | Runtime log destination; protect as operational data |
 | `MAPI_LOG_LEVEL` | `INFO` | no | Debug logs may contain operational context |
 | `MAPI_BACKUP_DIR` | `./backups` | no | Protect like the primary database |
 | `MAPI_REQUEST_TIMEOUT_SECONDS` | `30` | no | Limits optional outbound provider waits |
 | `MAPI_RECOVERY_COMMAND_JSON` | empty | no | Explicit local JSON argv for `mapi-recover --execute`; never shell-evaluated |
 
 Environment variables are process configuration, not authorization. A payload field can never grant a higher profile.
+
+## First-run configuration
+
+`mapi-init` owns instance creation. Its generated file is private state and must not be committed. The default instance root is outside the source checkout. Local bootstrap may explicitly enable the admin surface only when `--profile admin` is chosen; VPS bootstrap rejects an admin profile. Resume never acts as an implicit configuration editor.
+
+The generated self-model records are operational evidence from the operator's explicit configuration: one identity record and one namespace-separation guardrail. They are not demo memories or inferred personality traits.
 
 ## Remote authentication status
 

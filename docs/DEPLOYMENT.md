@@ -1,5 +1,11 @@
 # Deployment
 
+## First server bootstrap
+
+Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` additionally validates the built-in OAuth/PKCE remote-auth configuration and requires an HTTPS redirect allowlist plus a trusted proxy-injected identity value.
+
+Neither VPS mode performs root actions. Review `generated/mapi.service` and the reverse-proxy security template, install them through your normal privileged deployment process, then run `mapi-doctor` and the MCP smoke. The proxy must authenticate requests and terminate TLS. A generated template is intentionally incomplete until that authentication boundary is configured.
+
 ## Localhost development
 
 The supported default is `127.0.0.1:8015`, one MAPI process and one SQLite writer.
