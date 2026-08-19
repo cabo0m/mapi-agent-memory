@@ -14,7 +14,7 @@ from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProvider, TokenVerifier
-from fastmcp.server.dependencies import get_http_request
+from mcp.server.auth.handlers.authorize import AuthorizationRequest
 from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
@@ -25,7 +25,7 @@ from mcp.server.auth.provider import (
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from app.runtime.owner_credentials import verify_owner_password
@@ -82,15 +82,6 @@ def _append_query(url: str, **params: str | None) -> str:
     query = list(parse_qsl(split.query, keep_blank_values=True))
     query.extend((key, value) for key, value in params.items() if value is not None)
     return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query), split.fragment))
-
-
-def _request_pkce_method() -> str | None:
-    try:
-        request = get_http_request()
-    except RuntimeError:
-        return None
-    value = request.query_params.get("code_challenge_method")
-    return None if value is None else str(value).strip()
 
 
 def _connect(db_path: str | Path) -> sqlite3.Connection:
@@ -231,62 +222,6 @@ class RemoteAuthStore:
                 WHERE code_hash=? AND consumed_at IS NULL AND expires_at>?
                 """,
                 (_utc_now_iso(), code_hash, now),
-            )
-            conn.commit()
-            return int(cursor.rowcount or 0) == 1
-
-    def insert_login_challenge(
-        self,
-        *,
-        raw_challenge: str,
-        client_id: str,
-        redirect_uri: str,
-        scopes: Iterable[str],
-        code_challenge: str,
-        state: str | None,
-        expires_at: int,
-    ) -> None:
-        with _connect(self.db_path) as conn:
-            ensure_remote_auth_schema(conn)
-            conn.execute(
-                """
-                INSERT INTO remote_auth_login_challenges (
-                    challenge_hash, client_id, redirect_uri, scopes_json,
-                    code_challenge, state, expires_at, created_at, consumed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    _secret_hash(raw_challenge),
-                    client_id,
-                    redirect_uri,
-                    _json_list(scopes),
-                    code_challenge,
-                    state,
-                    int(expires_at),
-                    _utc_now_iso(),
-                ),
-            )
-            conn.commit()
-
-    def load_login_challenge(self, raw_challenge: str) -> sqlite3.Row | None:
-        with _connect(self.db_path) as conn:
-            ensure_remote_auth_schema(conn)
-            return conn.execute(
-                "SELECT * FROM remote_auth_login_challenges WHERE challenge_hash=?",
-                (_secret_hash(raw_challenge),),
-            ).fetchone()
-
-    def consume_login_challenge(self, raw_challenge: str) -> bool:
-        now = _now_epoch()
-        with _connect(self.db_path) as conn:
-            ensure_remote_auth_schema(conn)
-            cursor = conn.execute(
-                """
-                UPDATE remote_auth_login_challenges
-                SET consumed_at=?
-                WHERE challenge_hash=? AND consumed_at IS NULL AND expires_at>?
-                """,
-                (_utc_now_iso(), _secret_hash(raw_challenge), now),
             )
             conn.commit()
             return int(cursor.rowcount or 0) == 1
@@ -523,66 +458,128 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
         raise TokenError("temporarily_unavailable", "rate_limited")
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        client_id = str(client.client_id or "")
-        self._rate_or_raise(bucket=client_id, action="oauth_authorize", channel="oauth")
-        if not hmac.compare_digest(client_id, self.config.oauth_client_id):
-            raise AuthorizeError(error="unauthorized_client", error_description="unknown_client")
-        redirect_uri = str(params.redirect_uri)
-        if redirect_uri not in self.config.oauth_redirect_uris:
-            raise AuthorizeError(error="invalid_request", error_description="redirect_uri_not_allowed")
-        request_pkce_method = _request_pkce_method()
-        if request_pkce_method is not None and request_pkce_method != PKCE_METHOD:
-            self.store.audit(
-                event_type="oauth_authorize",
-                channel="oauth",
-                outcome="denied",
-                reason_code="pkce_method_not_s256",
-                client_id=client_id,
-                owner_key=self.config.owner_key,
-                profile=REMOTE_OAUTH_PROFILE,
+        # The SDK authorization handler is replaced by _direct_authorize_route in get_routes().
+        # Keep this method only to satisfy the OAuth provider interface and fail closed if called.
+        del client, params
+        raise AuthorizeError(error="server_error", error_description="direct_authorize_route_required")
+
+    def _oauth_error_response(
+        self,
+        *,
+        error: str,
+        description: str,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> Response:
+        payload = {"error": error, "error_description": description}
+        if state is not None:
+            payload["state"] = state
+        if redirect_uri and redirect_uri in self.config.oauth_redirect_uris:
+            return RedirectResponse(
+                _append_query(
+                    redirect_uri,
+                    error=error,
+                    error_description=description,
+                    state=state,
+                ),
+                status_code=302,
+                headers={"Cache-Control": "no-store"},
             )
-            raise AuthorizeError(error="invalid_request", error_description="pkce_s256_required")
-        if not PKCE_CHALLENGE_PATTERN.fullmatch(str(params.code_challenge or "")):
-            raise AuthorizeError(error="invalid_request", error_description="pkce_s256_required")
-        requested_scopes = tuple(params.scopes or REMOTE_OAUTH_SCOPES)
-        if not requested_scopes or not set(requested_scopes).issubset(set(REMOTE_OAUTH_SCOPES)):
-            raise AuthorizeError(error="invalid_scope", error_description="scope_not_allowed")
-        if REMOTE_REQUIRED_SCOPE not in requested_scopes:
-            raise AuthorizeError(error="invalid_scope", error_description="required_scope_missing")
+        return JSONResponse(payload, status_code=400, headers={"Cache-Control": "no-store"})
 
-        raw_challenge = "mapi_login_" + secrets.token_urlsafe(32)
-        expires_at = _now_epoch() + self.config.login_challenge_ttl_seconds
-        self.store.insert_login_challenge(
-            raw_challenge=raw_challenge,
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            scopes=requested_scopes,
-            code_challenge=str(params.code_challenge),
-            state=params.state,
-            expires_at=expires_at,
-        )
-        self.store.audit(
-            event_type="owner_login_challenge",
-            channel="oauth",
-            outcome="allowed",
-            reason_code="login_challenge_issued",
-            token_hash=_secret_hash(raw_challenge),
-            client_id=client_id,
-            owner_key=self.config.owner_key,
-            profile=REMOTE_OAUTH_PROFILE,
-        )
-        return _append_query(f"{self.config.base_url}/oauth/login", request=raw_challenge)
+    async def _validate_direct_authorization_request(
+        self, request: Request
+    ) -> tuple[dict[str, Any] | None, Response | None]:
+        params = request.query_params if request.method == "GET" else await request.form()
+        state = str(params.get("state")) if params.get("state") is not None else None
+        try:
+            auth_request = AuthorizationRequest.model_validate(params)
+        except Exception as exc:
+            return None, self._oauth_error_response(
+                error="invalid_request",
+                description=str(exc),
+                state=state,
+            )
 
-    def _issue_authorization_code_from_challenge(self, row: sqlite3.Row) -> str:
+        client = await self.get_client(auth_request.client_id)
+        if client is None:
+            return None, self._oauth_error_response(
+                error="invalid_request",
+                description=f"Client ID '{auth_request.client_id}' not found",
+                state=auth_request.state,
+            )
+
+        try:
+            redirect_uri_obj = client.validate_redirect_uri(auth_request.redirect_uri)
+        except Exception as exc:
+            return None, self._oauth_error_response(
+                error="invalid_request",
+                description=str(exc),
+                state=auth_request.state,
+            )
+        redirect_uri = str(redirect_uri_obj)
+
+        try:
+            scopes = tuple(client.validate_scope(auth_request.scope))
+        except Exception as exc:
+            return None, self._oauth_error_response(
+                error="invalid_scope",
+                description=str(exc),
+                state=auth_request.state,
+                redirect_uri=redirect_uri,
+            )
+
+        if auth_request.code_challenge_method != PKCE_METHOD:
+            return None, self._oauth_error_response(
+                error="invalid_request",
+                description="pkce_s256_required",
+                state=auth_request.state,
+                redirect_uri=redirect_uri,
+            )
+        if not PKCE_CHALLENGE_PATTERN.fullmatch(str(auth_request.code_challenge or "")):
+            return None, self._oauth_error_response(
+                error="invalid_request",
+                description="pkce_s256_required",
+                state=auth_request.state,
+                redirect_uri=redirect_uri,
+            )
+        if not scopes:
+            scopes = tuple(REMOTE_OAUTH_SCOPES)
+        if not set(scopes).issubset(set(REMOTE_OAUTH_SCOPES)):
+            return None, self._oauth_error_response(
+                error="invalid_scope",
+                description="scope_not_allowed",
+                state=auth_request.state,
+                redirect_uri=redirect_uri,
+            )
+        if REMOTE_REQUIRED_SCOPE not in scopes:
+            return None, self._oauth_error_response(
+                error="invalid_scope",
+                description="required_scope_missing",
+                state=auth_request.state,
+                redirect_uri=redirect_uri,
+            )
+
+        return {
+            "client_id": str(auth_request.client_id),
+            "redirect_uri": redirect_uri,
+            "scopes": scopes,
+            "scope": " ".join(scopes),
+            "state": auth_request.state,
+            "code_challenge": str(auth_request.code_challenge),
+            "code_challenge_method": PKCE_METHOD,
+            "resource": auth_request.resource,
+        }, None
+
+    def _issue_authorization_code(self, auth: dict[str, Any]) -> str:
         raw_code = "mapi_ac_" + secrets.token_urlsafe(32)
         expires_at = _now_epoch() + self.config.authorization_code_ttl_seconds
-        scopes = _parse_json_list(row["scopes_json"])
         self.store.insert_authorization_code(
             raw_code=raw_code,
-            client_id=str(row["client_id"]),
-            redirect_uri=str(row["redirect_uri"]),
-            scopes=scopes,
-            code_challenge=str(row["code_challenge"]),
+            client_id=str(auth["client_id"]),
+            redirect_uri=str(auth["redirect_uri"]),
+            scopes=auth["scopes"],
+            code_challenge=str(auth["code_challenge"]),
             owner_key=self.config.owner_key,
             profile=REMOTE_OAUTH_PROFILE,
             expires_at=expires_at,
@@ -593,18 +590,42 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
             outcome="allowed",
             reason_code="authorization_code_issued",
             token_hash=_secret_hash(raw_code),
-            client_id=str(row["client_id"]),
+            client_id=str(auth["client_id"]),
             owner_key=self.config.owner_key,
             profile=REMOTE_OAUTH_PROFILE,
         )
-        return _append_query(str(row["redirect_uri"]), code=raw_code, state=row["state"])
+        return _append_query(
+            str(auth["redirect_uri"]),
+            code=raw_code,
+            state=auth.get("state"),
+        )
 
-    def _login_html(self, *, request_token: str, error: str | None = None) -> str:
-        safe_request = html.escape(str(request_token), quote=True)
+    def _login_html(self, *, auth: dict[str, Any], error: str | None = None) -> str:
         safe_login = html.escape(self.config.owner_login, quote=True)
         error_html = (
             '<div class="error">Nieprawidłowy login lub hasło.</div>' if error else ""
         )
+
+        hidden_fields: list[str] = []
+        values = {
+            "response_type": "code",
+            "client_id": auth["client_id"],
+            "redirect_uri": auth["redirect_uri"],
+            "scope": auth["scope"],
+            "state": auth.get("state"),
+            "code_challenge": auth["code_challenge"],
+            "code_challenge_method": auth["code_challenge_method"],
+            "resource": auth.get("resource"),
+        }
+        for key, value in values.items():
+            if value is None:
+                continue
+            hidden_fields.append(
+                f'<input type="hidden" name="{html.escape(str(key), quote=True)}" '
+                f'value="{html.escape(str(value), quote=True)}">'
+            )
+        hidden = "\n".join(hidden_fields)
+
         return f"""<!doctype html>
 <html lang="pl">
 <head>
@@ -629,8 +650,8 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
 <h1>Zaloguj się do Polaris</h1>
 <p>Jedno logowanie autoryzuje połączenie ChatGPT z Twoją instancją MCP.</p>
 {error_html}
-<form method="post" action="/oauth/login" autocomplete="on">
-<input type="hidden" name="request" value="{safe_request}">
+<form method="post" action="/authorize" autocomplete="on">
+{hidden}
 <label for="username">Login</label>
 <input id="username" name="username" type="text" value="{safe_login}" autocomplete="username" required autofocus>
 <label for="password">Hasło</label>
@@ -642,9 +663,15 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
 </body>
 </html>"""
 
-    def _login_response(self, *, request_token: str, status_code: int = 200, error: str | None = None) -> HTMLResponse:
+    def _login_response(
+        self,
+        *,
+        auth: dict[str, Any],
+        status_code: int = 200,
+        error: str | None = None,
+    ) -> HTMLResponse:
         return HTMLResponse(
-            self._login_html(request_token=request_token, error=error),
+            self._login_html(auth=auth, error=error),
             status_code=status_code,
             headers={
                 "Cache-Control": "no-store",
@@ -655,32 +682,25 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
             },
         )
 
-    async def _owner_login_route(self, request: Request) -> Response:
+    async def _direct_authorize_route(self, request: Request) -> Response:
+        auth, error_response = await self._validate_direct_authorization_request(request)
+        if error_response is not None:
+            return error_response
+        assert auth is not None
+
         if request.method == "GET":
-            raw_challenge = str(request.query_params.get("request") or "").strip()
-            row = self.store.load_login_challenge(raw_challenge) if raw_challenge else None
-            if row is None or row["consumed_at"] or int(row["expires_at"]) <= _now_epoch():
-                return HTMLResponse(
-                    "Sesja logowania Polaris wygasła. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
-                    status_code=400,
-                    headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
-                )
-            return self._login_response(request_token=raw_challenge)
+            self._rate_or_raise(
+                bucket=str(auth["client_id"]),
+                action="oauth_authorize",
+                channel="oauth",
+            )
+            return self._login_response(auth=auth)
 
         form = await request.form()
-        raw_challenge = str(form.get("request") or "").strip()
         username = str(form.get("username") or "").strip()
         password = str(form.get("password") or "")
-        row = self.store.load_login_challenge(raw_challenge) if raw_challenge else None
-        if row is None or row["consumed_at"] or int(row["expires_at"]) <= _now_epoch():
-            return HTMLResponse(
-                "Sesja logowania Polaris wygasła. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
-                status_code=400,
-                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
-            )
-
         client_host = request.client.host if request.client else "unknown"
-        bucket = f"{client_host}:{_fingerprint_from_hash(_secret_hash(raw_challenge))}"
+        bucket = f"{client_host}:{auth['client_id']}"
         allowed = self.store.rate_allowed(
             bucket=bucket,
             action="owner_login",
@@ -696,35 +716,47 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
                 channel="oauth",
                 outcome="denied",
                 reason_code="rate_limited" if not allowed else "invalid_owner_credentials",
-                token_hash=_secret_hash(raw_challenge),
-                client_id=str(row["client_id"]),
+                client_id=str(auth["client_id"]),
                 owner_key=None,
                 profile=None,
             )
-            return self._login_response(request_token=raw_challenge, status_code=401, error="invalid_credentials")
-
-        if not self.store.consume_login_challenge(raw_challenge):
-            return HTMLResponse(
-                "Sesja logowania Polaris została już wykorzystana. Wróć do ChatGPT i rozpocznij autoryzację ponownie.",
-                status_code=400,
-                headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+            return self._login_response(
+                auth=auth,
+                status_code=429 if not allowed else 401,
+                error="invalid_credentials",
             )
+
         self.store.audit(
             event_type="owner_login",
             channel="oauth",
             outcome="allowed",
             reason_code="owner_authenticated",
-            token_hash=_secret_hash(raw_challenge),
-            client_id=str(row["client_id"]),
+            client_id=str(auth["client_id"]),
             owner_key=self.config.owner_key,
             profile=REMOTE_OAUTH_PROFILE,
         )
-        return RedirectResponse(self._issue_authorization_code_from_challenge(row), status_code=302)
+        return RedirectResponse(
+            self._issue_authorization_code(auth),
+            status_code=302,
+            headers={"Cache-Control": "no-store"},
+        )
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         routes = list(super().get_routes(mcp_path))
-        routes.append(Route("/oauth/login", endpoint=self._owner_login_route, methods=["GET", "POST"]))
-        return routes
+        replaced: list[Route] = []
+        for route in routes:
+            if isinstance(route, Route) and route.path == "/authorize":
+                replaced.append(
+                    Route(
+                        "/authorize",
+                        endpoint=self._direct_authorize_route,
+                        methods=["GET", "POST"],
+                    )
+                )
+            else:
+                replaced.append(route)
+        return replaced
+
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
@@ -1031,12 +1063,6 @@ def remote_auth_status(
         ensure_remote_auth_schema(conn)
         counts = {
             "authorization_codes": int(conn.execute("SELECT COUNT(*) FROM remote_auth_authorization_codes").fetchone()[0]),
-            "active_login_challenges": int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM remote_auth_login_challenges WHERE consumed_at IS NULL AND expires_at>?",
-                    (_now_epoch(),),
-                ).fetchone()[0]
-            ),
             "active_access_tokens": int(
                 conn.execute(
                     "SELECT COUNT(*) FROM remote_auth_tokens WHERE token_kind='access' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)",
@@ -1070,7 +1096,7 @@ def remote_auth_status(
             "client_id": resolved.oauth_client_id,
             "redirect_uri_count": len(resolved.oauth_redirect_uris),
             "owner_login": resolved.owner_login,
-            "owner_login_path": "/oauth/login",
+            "owner_login_path": "/authorize",
             "login_ui": "built_in",
             "pkce_method": PKCE_METHOD,
             "dynamic_registration": False,
@@ -1078,7 +1104,6 @@ def remote_auth_status(
             "access_ttl_seconds": resolved.access_ttl_seconds,
             "refresh_ttl_seconds": resolved.refresh_ttl_seconds,
             "authorization_code_ttl_seconds": resolved.authorization_code_ttl_seconds,
-            "login_challenge_ttl_seconds": resolved.login_challenge_ttl_seconds,
             "profile": REMOTE_OAUTH_PROFILE,
         },
         "legacy_codex": {

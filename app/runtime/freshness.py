@@ -241,7 +241,6 @@ def runtime_config_contract(*, profile: str | None = None) -> dict[str, Any]:
             "access_ttl_seconds": remote.access_ttl_seconds,
             "refresh_ttl_seconds": remote.refresh_ttl_seconds,
             "authorization_code_ttl_seconds": remote.authorization_code_ttl_seconds,
-            "login_challenge_ttl_seconds": remote.login_challenge_ttl_seconds,
             "rate_limit_window_seconds": remote.rate_limit_window_seconds,
             "rate_limit_max_attempts": remote.rate_limit_max_attempts,
         },

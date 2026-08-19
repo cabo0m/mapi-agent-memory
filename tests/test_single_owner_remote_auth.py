@@ -14,17 +14,6 @@ def test_single_remote_oauth_identity_is_admin() -> None:
     assert "offline_access" in REMOTE_OAUTH_SCOPES
 
 
-def test_owner_login_challenge_lives_longer_than_authorization_code(monkeypatch) -> None:
-    from app.runtime.remote_auth_config import RemoteAuthConfig
-
-    monkeypatch.delenv("MAPI_REMOTE_AUTH_CODE_TTL_SECONDS", raising=False)
-    monkeypatch.delenv("MAPI_REMOTE_LOGIN_CHALLENGE_TTL_SECONDS", raising=False)
-    config = RemoteAuthConfig.from_env()
-    assert config.authorization_code_ttl_seconds == 300
-    assert config.login_challenge_ttl_seconds == 900
-    assert config.login_challenge_ttl_seconds > config.authorization_code_ttl_seconds
-
-
 def test_remote_actor_accepts_only_owner_oauth_admin() -> None:
     admin = SimpleNamespace(
         claims={"owner_key": "owner", "profile": "admin", "auth_channel": "oauth"},
@@ -72,12 +61,18 @@ except RuntimeError as exc:
 else:
     raise AssertionError('legacy bearer issuance unexpectedly enabled')
 """
-    completed = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert completed.returncode == 0, completed.stderr
 
 
-def test_owner_login_is_the_single_oauth_login_and_issues_refresh_token(tmp_path) -> None:
-    code = r'''
+def test_owner_login_is_directly_on_authorize_and_issues_refresh_token(tmp_path) -> None:
+    code = r"""
 import asyncio
 import base64
 import hashlib
@@ -123,29 +118,27 @@ async def main():
         assert metadata.status_code == 200, metadata.text
         assert 'offline_access' in metadata.json()['scopes_supported']
 
-        authorize = await client.get('/authorize', params=params)
-        assert authorize.status_code == 302, authorize.text
-        login_url = authorize.headers['location']
-        parsed_login = urlparse(login_url)
-        assert parsed_login.path == '/oauth/login'
-        request_token = parse_qs(parsed_login.query)['request'][0]
-
-        login_page = await client.get('/oauth/login', params={'request': request_token})
-        assert login_page.status_code == 200
+        login_page = await client.get('/authorize', params=params)
+        assert login_page.status_code == 200, login_page.text
         assert 'Zaloguj się do Polaris' in login_page.text
+        assert 'action="/authorize"' in login_page.text
+        assert '/oauth/login' not in login_page.text
         assert 'Basic' not in login_page.text
         assert PASSWORD not in login_page.text
 
-        wrong = await client.post('/oauth/login', data={
-            'request': request_token,
+        legacy_login = await client.get('/oauth/login')
+        assert legacy_login.status_code == 404
+
+        wrong = await client.post('/authorize', data={
+            **params,
             'username': 'michal',
             'password': 'this is the wrong password',
         })
         assert wrong.status_code == 401
         assert 'Nieprawidłowy login lub hasło' in wrong.text
 
-        accepted = await client.post('/oauth/login', data={
-            'request': request_token,
+        accepted = await client.post('/authorize', data={
+            **params,
             'username': 'michal',
             'password': PASSWORD,
         })
@@ -155,13 +148,6 @@ async def main():
         query = parse_qs(callback.query)
         assert query['state'] == ['state-123']
         code = query['code'][0]
-
-        reused = await client.post('/oauth/login', data={
-            'request': request_token,
-            'username': 'michal',
-            'password': PASSWORD,
-        })
-        assert reused.status_code == 400
 
         token = await client.post('/token', data={
             'grant_type': 'authorization_code',
@@ -187,6 +173,12 @@ async def main():
         assert refreshed['refresh_token']
 
 asyncio.run(main())
-'''
-    completed = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert completed.returncode == 0, completed.stderr

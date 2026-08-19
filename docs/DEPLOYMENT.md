@@ -2,7 +2,7 @@
 
 ## First server bootstrap
 
-Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` is the single-owner deployment mode: it validates OAuth/PKCE, requires an HTTPS redirect allowlist, configures the built-in owner login and maps that authenticated owner directly to the `admin` profile.
+Use `mapi-init` rather than composing first-run state by hand. `mapi-init --mode vps-proxy --public-url https://mapi.example.com` creates the database, migrations, instance configuration and operator artifacts while keeping the MCP runtime on loopback. `vps-remote-auth` is the single-owner deployment mode: it validates OAuth/PKCE, requires an HTTPS redirect allowlist, configures the built-in owner login directly on `/authorize` and maps that authenticated owner directly to the `admin` profile.
 
 VPS mode can install and start the generated systemd service as part of `mapi-init`. Use `--service-name <name>` to avoid collisions on shared hosts; the normalized unit name is persisted in the instance configuration and reused by `--resume`. Interactive installation offers service installation automatically; provisioning scripts use `--install-service`. First-run also creates and verifies a SQLite-consistent initial backup. The installer never modifies firewall or DNS. In `vps-remote-auth`, the reverse proxy terminates TLS and forwards to loopback without adding a second login layer because OAuth authentication is owned by MAPI itself. In `vps-proxy`, the external proxy remains the authentication boundary.
 
@@ -14,7 +14,7 @@ The supported default is `127.0.0.1:8015`, one MAPI process and one SQLite write
 
 ## Private LAN or single server
 
-Keep the MAPI origin on loopback behind a TLS reverse proxy. In `vps-remote-auth`, MAPI itself is the OAuth authorization server and the built-in owner login is the authentication boundary; the proxy must not inject an identity or add Basic Auth. Restrict filesystem permissions for the data, backup and log directories. Use a persistent local volume and avoid network filesystems for SQLite. Never accept a requested profile from an untrusted MCP payload.
+Keep the MAPI origin on loopback behind a TLS reverse proxy. In `vps-remote-auth`, MAPI itself is the OAuth authorization server and the built-in `/authorize` owner login is the authentication boundary; the proxy must not inject an identity or add Basic Auth. Restrict filesystem permissions for the data, backup and log directories. Use a persistent local volume and avoid network filesystems for SQLite. Never accept a requested profile from an untrusted MCP payload.
 
 ## Reverse proxy
 

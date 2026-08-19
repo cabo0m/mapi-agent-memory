@@ -16,7 +16,6 @@ The authoritative neutral template is [`.env.example`](../.env.example). `mapi-i
 | `MAPI_ADMIN_TOOLS_ENABLED` | `false` | no | Must be true before `admin` is effective |
 | `MAPI_REMOTE_OWNER_LOGIN` | `owner` | vps-remote-auth | Login shown by the built-in OAuth owner page |
 | `MAPI_REMOTE_OWNER_PASSWORD_HASH` | generated PBKDF2 hash | vps-remote-auth | Password verifier only; never store the plaintext owner password |
-| `MAPI_REMOTE_LOGIN_CHALLENGE_TTL_SECONDS` | `900` | no | Time allowed to finish the built-in owner login before its one-time OAuth challenge expires |
 | `MAPI_OWNER_KEY` | `owner` | no | Single-instance identity namespace |
 | `MAPI_AGENT_SUBJECT_KEY` | `agent` | no | Stable subject key for Agent Self Model |
 | `MAPI_AGENT_DISPLAY_NAME` | `Agent` | no | Display label only; not authorization |
@@ -45,7 +44,7 @@ The generated self-model records are operational evidence from the operator's ex
 
 ## Remote authentication status
 
-Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. Polaris/MAPI owns the authorization login page and verifies the owner password against a salted PBKDF2 hash stored in the private instance `.env`; the plaintext password is never stored. The reverse proxy only provides HTTPS and forwarding. Ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider.
+Remote authentication is separate from the local quickstart. The supported public model is intentionally simple: one owner, one OAuth login path, one resulting `admin` profile. Polaris/MAPI renders the owner login directly at `/authorize` and verifies the owner password against a salted PBKDF2 hash stored in the private instance `.env`; there is no intermediate login session or challenge record. The plaintext password is never stored. The reverse proxy only provides HTTPS and forwarding. Ordinary payload fields cannot raise privileges. Legacy Codex bearer issuance is retired and ignored by the active remote-auth provider.
 
 ## Agent Self Model
 
