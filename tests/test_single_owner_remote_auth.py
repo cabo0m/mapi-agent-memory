@@ -125,6 +125,8 @@ async def main():
         assert '/oauth/login' not in login_page.text
         assert 'Basic' not in login_page.text
         assert PASSWORD not in login_page.text
+        csp = login_page.headers['content-security-policy']
+        assert "form-action 'self' https://chatgpt.com" in csp
 
         legacy_login = await client.get('/oauth/login')
         assert legacy_login.status_code == 404

@@ -670,6 +670,13 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
         status_code: int = 200,
         error: str | None = None,
     ) -> HTMLResponse:
+        redirect = urlsplit(str(auth["redirect_uri"]))
+        redirect_origin = f"{redirect.scheme}://{redirect.netloc}"
+        csp = (
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            f"form-action 'self' {redirect_origin}; "
+            "frame-ancestors 'none'; base-uri 'none'"
+        )
         return HTMLResponse(
             self._login_html(auth=auth, error=error),
             status_code=status_code,
@@ -678,7 +685,7 @@ button {{ width:100%; margin-top:20px; padding:12px 14px; border:0; border-radiu
                 "Pragma": "no-cache",
                 "Referrer-Policy": "no-referrer",
                 "X-Frame-Options": "DENY",
-                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "Content-Security-Policy": csp,
             },
         )
 
