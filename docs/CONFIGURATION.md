@@ -16,6 +16,7 @@ The authoritative neutral template is [`.env.example`](../.env.example). `mapi-i
 | `MAPI_ADMIN_TOOLS_ENABLED` | `false` | no | Must be true before `admin` is effective |
 | `MAPI_REMOTE_OWNER_LOGIN` | `owner` | vps-remote-auth | Login shown by the built-in OAuth owner page |
 | `MAPI_REMOTE_OWNER_PASSWORD_HASH` | generated PBKDF2 hash | vps-remote-auth | Password verifier only; never store the plaintext owner password |
+| `MAPI_REMOTE_LOGIN_CHALLENGE_TTL_SECONDS` | `900` | no | Time allowed to finish the built-in owner login before its one-time OAuth challenge expires |
 | `MAPI_OWNER_KEY` | `owner` | no | Single-instance identity namespace |
 | `MAPI_AGENT_SUBJECT_KEY` | `agent` | no | Stable subject key for Agent Self Model |
 | `MAPI_AGENT_DISPLAY_NAME` | `Agent` | no | Display label only; not authorization |

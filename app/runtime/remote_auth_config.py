@@ -28,6 +28,7 @@ class RemoteAuthConfig:
     access_ttl_seconds: int = 900
     refresh_ttl_seconds: int = 30 * 24 * 3600
     authorization_code_ttl_seconds: int = 300
+    login_challenge_ttl_seconds: int = 900
     rate_limit_window_seconds: int = 60
     rate_limit_max_attempts: int = 120
 
@@ -56,6 +57,9 @@ class RemoteAuthConfig:
             ),
             authorization_code_ttl_seconds=max(
                 60, int(os.environ.get("MAPI_REMOTE_AUTH_CODE_TTL_SECONDS", "300"))
+            ),
+            login_challenge_ttl_seconds=max(
+                300, int(os.environ.get("MAPI_REMOTE_LOGIN_CHALLENGE_TTL_SECONDS", "900"))
             ),
             rate_limit_window_seconds=max(
                 1, int(os.environ.get("MAPI_REMOTE_RATE_WINDOW_SECONDS", "60"))

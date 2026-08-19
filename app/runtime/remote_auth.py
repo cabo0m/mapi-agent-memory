@@ -551,7 +551,7 @@ class PrivateSQLiteOAuthProvider(OAuthProvider):
             raise AuthorizeError(error="invalid_scope", error_description="required_scope_missing")
 
         raw_challenge = "mapi_login_" + secrets.token_urlsafe(32)
-        expires_at = _now_epoch() + self.config.authorization_code_ttl_seconds
+        expires_at = _now_epoch() + self.config.login_challenge_ttl_seconds
         self.store.insert_login_challenge(
             raw_challenge=raw_challenge,
             client_id=client_id,
@@ -1077,6 +1077,8 @@ def remote_auth_status(
             "refresh_rotation": True,
             "access_ttl_seconds": resolved.access_ttl_seconds,
             "refresh_ttl_seconds": resolved.refresh_ttl_seconds,
+            "authorization_code_ttl_seconds": resolved.authorization_code_ttl_seconds,
+            "login_challenge_ttl_seconds": resolved.login_challenge_ttl_seconds,
             "profile": REMOTE_OAUTH_PROFILE,
         },
         "legacy_codex": {

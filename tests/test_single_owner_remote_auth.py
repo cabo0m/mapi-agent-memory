@@ -14,6 +14,17 @@ def test_single_remote_oauth_identity_is_admin() -> None:
     assert "offline_access" in REMOTE_OAUTH_SCOPES
 
 
+def test_owner_login_challenge_lives_longer_than_authorization_code(monkeypatch) -> None:
+    from app.runtime.remote_auth_config import RemoteAuthConfig
+
+    monkeypatch.delenv("MAPI_REMOTE_AUTH_CODE_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("MAPI_REMOTE_LOGIN_CHALLENGE_TTL_SECONDS", raising=False)
+    config = RemoteAuthConfig.from_env()
+    assert config.authorization_code_ttl_seconds == 300
+    assert config.login_challenge_ttl_seconds == 900
+    assert config.login_challenge_ttl_seconds > config.authorization_code_ttl_seconds
+
+
 def test_remote_actor_accepts_only_owner_oauth_admin() -> None:
     admin = SimpleNamespace(
         claims={"owner_key": "owner", "profile": "admin", "auth_channel": "oauth"},
