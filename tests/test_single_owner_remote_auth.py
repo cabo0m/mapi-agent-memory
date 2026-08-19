@@ -11,6 +11,7 @@ from app.runtime.remote_auth_contract import REMOTE_OAUTH_PROFILE, REMOTE_OAUTH_
 def test_single_remote_oauth_identity_is_admin() -> None:
     assert REMOTE_OAUTH_PROFILE == "admin"
     assert "mapi:admin" in REMOTE_OAUTH_SCOPES
+    assert "offline_access" in REMOTE_OAUTH_SCOPES
 
 
 def test_remote_actor_accepts_only_owner_oauth_admin() -> None:
