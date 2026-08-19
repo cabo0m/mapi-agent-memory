@@ -85,14 +85,14 @@ def test_first_run_onboarding_names_assistant_and_builds_user_profile(server, mo
     assert server.advance_polaris_onboarding("work_context", "Tworzę oprogramowanie i chcę pomocy w pracy.")["current_step"] == "memory_policy"
     assert server.advance_polaris_onboarding("memory_policy", "ask_when_unsure")["current_step"] == "memory_exclusions"
     assert server.advance_polaris_onboarding("memory_exclusions", skip=True)["current_step"] == "first_project"
-    completed = server.advance_polaris_onboarding("first_project", skip=True)
+    completed = server.advance_polaris_onboarding("first_project", "RPG")
     assert completed["status"] == "completed"
     assert completed["onboarding_required"] is False
     assert completed["summary"] == {
         "assistant_name": "Nova",
         "user_name": "Adam",
         "memory_policy": "ask_when_unsure",
-        "first_project": None,
+        "first_project": "RPG",
     }
 
     conn = server.get_db_connection()
@@ -108,7 +108,15 @@ def test_first_run_onboarding_names_assistant_and_builds_user_profile(server, mo
             "polaris-onboarding:v1:memory_policy",
         }.issubset(refs)
         assert "polaris-onboarding:v1:memory_exclusions" not in refs
-        assert "polaris-onboarding:v1:first_project" not in refs
+        assert "polaris-onboarding:v1:first_project" in refs
+        project_row = conn.execute(
+            "SELECT project_key, area_code, scope_code, content FROM memories "
+            "WHERE source_event_ref='polaris-onboarding:v1:first_project'"
+        ).fetchone()
+        assert project_row["project_key"] == "RPG"
+        assert project_row["area_code"] == "projects"
+        assert project_row["scope_code"] == "project"
+        assert "RPG" in project_row["content"]
     finally:
         conn.close()
 

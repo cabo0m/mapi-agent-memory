@@ -6883,7 +6883,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             confidence_score=1.0,
             tags="onboarding,project,initial-project",
             layer_code="core",
-            area_code="project",
+            area_code="projects",
             state_code="validated",
             scope_code="project",
             identity_weight=0.0,
