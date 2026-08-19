@@ -22,6 +22,7 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `steward_nightly` | Steward nightly. | `preview_memory_steward_nightly` | `reader` | `R0` | read | no | no | no | no |
 | `onboarding_status` | Onboarding status. | `get_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `onboarding_advance` | Onboarding advance. | `advance_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
+| `onboarding_revise` | Onboarding revise. | `revise_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `onboarding_skip` | Onboarding skip. | `skip_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `self_snapshot` | Self snapshot. | `get_agent_self_snapshot` | `reader` | `R0` | read | no | no | no | no |
 | `commitment_ledger` | Commitment ledger. | `get_agent_commitment_ledger` | `reader` | `R0` | read | no | no | no | no |

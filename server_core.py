@@ -55,9 +55,12 @@ from app.workshops.idempotency import idempotent_direct_mutation
 from app.workshops.runner import run_workshop_action_payload
 from app.runtime.freshness import get_runtime_readiness
 from app.runtime.onboarding import (
+    AUTONOMY_LEVELS,
     MEMORY_POLICIES,
+    ONBOARDING_STEPS,
     advance_onboarding_state,
     build_onboarding_payload,
+    revise_onboarding_answer_state,
     skip_onboarding_state,
 )
 from app.runtime.backpressure import transport_status_payload
@@ -6729,7 +6732,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="fact",
             title=f"Assistant name: {name}",
             source_context="Chosen explicitly by the user during Polaris onboarding.",
-            source_event_ref="polaris-onboarding:v1:agent_name",
+            source_event_ref="polaris-onboarding:v2:agent_name",
             supersedes_memory_id=old_id,
             importance_level="high",
             priority="high",
@@ -6769,7 +6772,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="fact",
             title=f"User name: {name}",
             source_context="Provided explicitly by the user during Polaris onboarding.",
-            source_event_ref="polaris-onboarding:v1:user_name",
+            source_event_ref="polaris-onboarding:v2:user_name",
             importance_level="high",
             visibility_scope="private",
             priority="high",
@@ -6799,8 +6802,43 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="fact",
             title="User work context",
             source_context="Provided explicitly by the user during Polaris onboarding.",
-            source_event_ref="polaris-onboarding:v1:work_context",
+            source_event_ref="polaris-onboarding:v2:work_context",
             visibility_scope="private",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    if step == "autonomy_level":
+        level = normalize_required_text(str(value), "autonomy_level")
+        descriptions = {
+            "reactive": "The assistant should mainly respond to explicit user requests and avoid unsolicited next-step proposals.",
+            "collaborative": "The assistant should propose useful next steps and flag problems while leaving consequential choices to the user.",
+            "proactive": "The assistant should actively surface problems, propose actions and revisit important commitments within its authorized boundaries.",
+        }
+        created = _insert_memory(
+            conn,
+            content=descriptions[level],
+            summary_short=f"Assistant autonomy level: {level}",
+            memory_type="preference",
+            source="polaris-onboarding",
+            importance_score=0.95,
+            confidence_score=1.0,
+            tags="user-profile,onboarding,assistant-autonomy,interaction-policy",
+            layer_code="core",
+            area_code="preferences",
+            state_code="validated",
+            scope_code="global",
+            identity_weight=0.7,
+            project_key=None,
+            entry_type="user_profile",
+            truth_kind="decision",
+            title=f"Assistant autonomy level: {level}",
+            source_context="Chosen explicitly by the user during Polaris onboarding review.",
+            source_event_ref="polaris-onboarding:v2:autonomy_level",
+            visibility_scope="private",
+            importance_level="high",
+            priority="high",
             ensure_embedding=False,
         )
         created_ids.append(int(created["id"]))
@@ -6832,7 +6870,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="decision",
             title=f"Memory policy: {policy}",
             source_context="Chosen explicitly by the user during Polaris onboarding.",
-            source_event_ref="polaris-onboarding:v1:memory_policy",
+            source_event_ref="polaris-onboarding:v2:memory_policy",
             visibility_scope="private",
             importance_level="high",
             priority="high",
@@ -6862,7 +6900,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="decision",
             title="User memory exclusion",
             source_context="Provided explicitly by the user during Polaris onboarding.",
-            source_event_ref="polaris-onboarding:v1:memory_exclusions",
+            source_event_ref="polaris-onboarding:v2:memory_exclusions",
             visibility_scope="private",
             importance_level="high",
             priority="high",
@@ -6892,7 +6930,7 @@ def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]
             truth_kind="fact",
             title=f"Initial project: {project}",
             source_context="Created from the user's explicit first-project choice during onboarding.",
-            source_event_ref="polaris-onboarding:v1:first_project",
+            source_event_ref="polaris-onboarding:v2:first_project",
             importance_level="high",
             priority="normal",
             ensure_embedding=False,
@@ -6921,15 +6959,48 @@ def advance_polaris_onboarding(
     value: str | None = None,
     skip: bool = False,
 ) -> dict[str, Any]:
-    """Persist one explicit onboarding answer, then return the next question. memory_policy uses automatic_important, ask_when_unsure or explicit_only."""
+    """Save one onboarding draft answer. Final summary confirmation atomically commits the reviewed profile."""
     conn = get_db_connection()
     try:
-        state = advance_onboarding_state(conn, step=step, value=value, skip=bool(skip))
-        saved_value = state.get("answers", {}).get(str(step).strip().casefold())
-        created_ids = _persist_onboarding_answer(conn, step=str(step).strip().casefold(), value=saved_value)
+        normalized_step = str(step).strip().casefold()
+        state = advance_onboarding_state(conn, step=normalized_step, value=value, skip=bool(skip))
+        created_ids: list[int] = []
+        if normalized_step == "summary_confirmation" and state.get("status") == "completed":
+            answers = dict(state.get("answers") or {})
+            for answer_step in ONBOARDING_STEPS[:-1]:
+                created_ids.extend(
+                    _persist_onboarding_answer(
+                        conn,
+                        step=answer_step,
+                        value=answers.get(answer_step),
+                    )
+                )
         conn.commit()
         payload = build_onboarding_payload(conn)
         payload["created_memory_ids"] = created_ids
+        payload["durable_profile_committed"] = bool(created_ids) and normalized_step == "summary_confirmation"
+        return payload
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def revise_polaris_onboarding(
+    step: str,
+    value: str | None = None,
+    skip: bool = False,
+) -> dict[str, Any]:
+    """Revise one draft answer while the onboarding summary is awaiting confirmation."""
+    conn = get_db_connection()
+    try:
+        revise_onboarding_answer_state(conn, step=step, value=value, skip=bool(skip))
+        conn.commit()
+        payload = build_onboarding_payload(conn)
+        payload["created_memory_ids"] = []
+        payload["durable_profile_committed"] = False
         return payload
     except Exception:
         conn.rollback()

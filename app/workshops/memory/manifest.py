@@ -89,11 +89,21 @@ WORKSHOP = Workshop(
         WorkshopAction(
             action='onboarding_advance',
             tool_name='advance_polaris_onboarding',
-            purpose='Persist one explicit onboarding answer and advance to the next question.',
+            purpose='Save one onboarding draft answer; final summary confirmation commits the reviewed profile.',
             min_profile='clean_operator', risk='medium', risk_class='R2',
             payload_schema={'step': 'str', 'value': 'str|null', 'skip': 'bool'},
             payload_constraints={
-                'step': {'enum': ['agent_name', 'user_name', 'work_context', 'memory_policy', 'memory_exclusions', 'first_project']},
+                'step': {'enum': ['agent_name', 'user_name', 'work_context', 'autonomy_level', 'memory_policy', 'memory_exclusions', 'first_project', 'summary_confirmation']},
+            },
+        ),
+        WorkshopAction(
+            action='onboarding_revise',
+            tool_name='revise_polaris_onboarding',
+            purpose='Revise one draft onboarding answer while the final summary is awaiting confirmation.',
+            min_profile='clean_operator', risk='medium', risk_class='R2',
+            payload_schema={'step': 'str', 'value': 'str|null', 'skip': 'bool'},
+            payload_constraints={
+                'step': {'enum': ['agent_name', 'user_name', 'work_context', 'autonomy_level', 'memory_policy', 'memory_exclusions', 'first_project']},
             },
         ),
         WorkshopAction(
