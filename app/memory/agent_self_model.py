@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from app.memory.current_state import resolve_current_memory_state
+from app.runtime.onboarding import persisted_agent_name
 
 AGENT_SELF_SNAPSHOT_SCHEMA = "mapi_agent_self_snapshot.v1"
 AGENT_COMMITMENT_LEDGER_SCHEMA = "mapi_agent_commitment_ledger.v1"
@@ -213,7 +214,11 @@ def calculate_agent_self_snapshot_fingerprint(snapshot: dict[str, Any]) -> str:
 
 
 def build_agent_self_snapshot_payload(conn: Any, *, subject_key: str | None, display_name: str | None, project_key: str | None, include_global: bool, limit: int, include_content: bool, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
-    identity = resolve_agent_identity(subject_key=subject_key, display_name=display_name, project_key=project_key)
+    identity = resolve_agent_identity(
+        subject_key=subject_key,
+        display_name=display_name or persisted_agent_name(conn),
+        project_key=project_key,
+    )
     items, reason_map = _load_candidates(conn, identity, include_global=bool(include_global), row_to_dict=row_to_dict, limit=limit)
     sections: dict[str, list[dict[str, Any]]] = {k: [] for k in ("identity", "preferences", "relationships", "commitments", "autobiography", "meta")}
     for item in items:
@@ -248,7 +253,11 @@ def _commitment_item(item: dict[str, Any]) -> bool:
 
 
 def build_agent_commitment_ledger_payload(conn: Any, *, subject_key: str | None, display_name: str | None, project_key: str | None, include_global: bool, limit: int, include_content: bool, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
-    identity = resolve_agent_identity(subject_key=subject_key, display_name=display_name, project_key=project_key)
+    identity = resolve_agent_identity(
+        subject_key=subject_key,
+        display_name=display_name or persisted_agent_name(conn),
+        project_key=project_key,
+    )
     items, reason_map = _load_candidates(conn, identity, include_global=bool(include_global), row_to_dict=row_to_dict, limit=limit)
     commitments = []
     for item in items:
@@ -293,7 +302,11 @@ def build_agent_commitment_ledger_payload(conn: Any, *, subject_key: str | None,
 
 
 def build_agent_autobiographical_timeline_payload(conn: Any, *, subject_key: str | None, display_name: str | None, project_key: str | None, include_global: bool, limit: int, include_content: bool, row_to_dict: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
-    identity = resolve_agent_identity(subject_key=subject_key, display_name=display_name, project_key=project_key)
+    identity = resolve_agent_identity(
+        subject_key=subject_key,
+        display_name=display_name or persisted_agent_name(conn),
+        project_key=project_key,
+    )
     items, reason_map = _load_candidates(conn, identity, include_global=bool(include_global), row_to_dict=row_to_dict, limit=max(limit, 200))
     timeline_items = []
     for item in items:

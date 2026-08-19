@@ -95,9 +95,14 @@ def init() -> None:
     mode = mode or "local"
 
     display_name = args.agent_name or existing_env.get("MAPI_AGENT_DISPLAY_NAME")
-    if not display_name and interactive:
-        display_name = input("Agent display name (Agent): ").strip() or "Agent"
-    display_name = display_name or "Agent"
+    if mode == "vps-remote-auth":
+        # Polaris is the product/runtime label. The human-facing assistant name
+        # is chosen later by the user during first-run MCP onboarding.
+        display_name = display_name or "Polaris"
+    else:
+        if not display_name and interactive:
+            display_name = input("Agent display name (Agent): ").strip() or "Agent"
+        display_name = display_name or "Agent"
     subject = args.agent_subject_key or existing_env.get("MAPI_AGENT_SUBJECT_KEY") or slugify_identity(display_name)
     owner = args.owner_key or existing_env.get("MAPI_OWNER_KEY") or subject
     project = args.agent_project_key or existing_env.get("MAPI_AGENT_PROJECT_KEY") or f"{subject}-self"

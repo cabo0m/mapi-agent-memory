@@ -80,6 +80,30 @@ WORKSHOP = Workshop(
             payload_schema={'project_key': 'str', 'candidate_limit': 'int', 'proposal_budget': 'int', 'include_debug': 'bool'},
         ),
         WorkshopAction(
+            action='onboarding_status',
+            tool_name='get_polaris_onboarding',
+            purpose='Read first-run Polaris onboarding state and the next single question to ask.',
+            min_profile='clean_operator', risk='low', risk_class='R0',
+            payload_schema={},
+        ),
+        WorkshopAction(
+            action='onboarding_advance',
+            tool_name='advance_polaris_onboarding',
+            purpose='Persist one explicit onboarding answer and advance to the next question.',
+            min_profile='clean_operator', risk='medium', risk_class='R2',
+            payload_schema={'step': 'str', 'value': 'str|null', 'skip': 'bool'},
+            payload_constraints={
+                'step': {'enum': ['agent_name', 'user_name', 'work_context', 'memory_policy', 'memory_exclusions', 'first_project']},
+            },
+        ),
+        WorkshopAction(
+            action='onboarding_skip',
+            tool_name='skip_polaris_onboarding',
+            purpose='Skip the remaining onboarding without disabling normal Polaris memory work.',
+            min_profile='clean_operator', risk='medium', risk_class='R2',
+            payload_schema={'reason': 'str|null'},
+        ),
+        WorkshopAction(
             action='self_snapshot',
             tool_name='get_agent_self_snapshot',
             purpose='Evidence-first read-only self snapshot for one configured agent subject.',

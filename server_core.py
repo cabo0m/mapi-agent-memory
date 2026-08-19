@@ -10,6 +10,7 @@ router. Public MPbM tools should stay in server_mpbm_core.py.
 import hashlib
 import inspect
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -53,6 +54,12 @@ from app.actor_context import (
 from app.workshops.idempotency import idempotent_direct_mutation
 from app.workshops.runner import run_workshop_action_payload
 from app.runtime.freshness import get_runtime_readiness
+from app.runtime.onboarding import (
+    MEMORY_POLICIES,
+    advance_onboarding_state,
+    build_onboarding_payload,
+    skip_onboarding_state,
+)
 from app.runtime.backpressure import transport_status_payload
 from app.runtime.private_mode import effective_multiuser_flag_enabled, private_owner_key, runtime_mode
 from app.runtime.context import (
@@ -6681,10 +6688,275 @@ def _agent_bootstrap_protocol() -> dict[str, Any]:
     return agent_bootstrap_protocol()
 
 
+
+def _persist_onboarding_answer(conn: Any, *, step: str, value: Any) -> list[int]:
+    if value is None:
+        return []
+    subject = normalize_optional_text(os.getenv("MAPI_AGENT_SUBJECT_KEY")) or "agent"
+    self_project = normalize_optional_text(os.getenv("MAPI_AGENT_PROJECT_KEY")) or "agent-self"
+    created_ids: list[int] = []
+
+    if step == "agent_name":
+        name = normalize_required_text(str(value), "agent_name")
+        old = conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE project_key=? AND memory_type='identity'
+              AND activity_state='active'
+              AND (tags LIKE '%agent-self%' OR source_event_ref LIKE 'mapi-init:%:identity')
+            ORDER BY CASE WHEN source_event_ref=? THEN 0 ELSE 1 END, id DESC
+            LIMIT 1
+            """,
+            (self_project, f"mapi-init:{subject}:identity"),
+        ).fetchone()
+        old_id = int(old["id"]) if old is not None else None
+        created = _insert_memory(
+            conn,
+            content=f"{name} is the name chosen by the user for this assistant instance.",
+            summary_short=f"Assistant name: {name}",
+            memory_type="identity",
+            source="polaris-onboarding",
+            importance_score=1.0,
+            confidence_score=1.0,
+            tags=f"agent-self,self-model,self-evidence,identity,onboarding,chosen-by:user,subject:{subject},agent:{subject}",
+            layer_code="identity",
+            area_code="identity",
+            state_code="validated",
+            scope_code="project",
+            identity_weight=1.0,
+            project_key=self_project,
+            entry_type="user_profile",
+            truth_kind="fact",
+            title=f"Assistant name: {name}",
+            source_context="Chosen explicitly by the user during Polaris onboarding.",
+            source_event_ref="polaris-onboarding:v1:agent_name",
+            supersedes_memory_id=old_id,
+            importance_level="high",
+            priority="high",
+            ensure_embedding=False,
+        )
+        new_id = int(created["id"])
+        created_ids.append(new_id)
+        if old_id is not None and old_id != new_id:
+            apply_direct_supersession_transition(
+                conn,
+                new_memory_id=new_id,
+                old_memory_id=old_id,
+                relation="supersedes",
+                insert_event=_insert_memory_event,
+                source="polaris-onboarding",
+            )
+        return created_ids
+
+    if step == "user_name":
+        name = normalize_required_text(str(value), "user_name")
+        created = _insert_memory(
+            conn,
+            content=f"The user prefers to be addressed as {name}.",
+            summary_short=f"User name: {name}",
+            memory_type="identity",
+            source="polaris-onboarding",
+            importance_score=0.95,
+            confidence_score=1.0,
+            tags="user-profile,identity,onboarding,user-name",
+            layer_code="identity",
+            area_code="identity",
+            state_code="validated",
+            scope_code="global",
+            identity_weight=0.9,
+            project_key=None,
+            entry_type="user_profile",
+            truth_kind="fact",
+            title=f"User name: {name}",
+            source_context="Provided explicitly by the user during Polaris onboarding.",
+            source_event_ref="polaris-onboarding:v1:user_name",
+            importance_level="high",
+            visibility_scope="private",
+            priority="high",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    if step == "work_context":
+        text = normalize_required_text(str(value), "work_context")
+        created = _insert_memory(
+            conn,
+            content=f"User work context and primary assistance needs: {text}",
+            summary_short="User work context",
+            memory_type="user_profile",
+            source="polaris-onboarding",
+            importance_score=0.8,
+            confidence_score=1.0,
+            tags="user-profile,onboarding,work-context",
+            layer_code="core",
+            area_code="preferences",
+            state_code="validated",
+            scope_code="global",
+            identity_weight=0.5,
+            project_key=None,
+            entry_type="user_profile",
+            truth_kind="fact",
+            title="User work context",
+            source_context="Provided explicitly by the user during Polaris onboarding.",
+            source_event_ref="polaris-onboarding:v1:work_context",
+            visibility_scope="private",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    if step == "memory_policy":
+        policy = normalize_required_text(str(value), "memory_policy")
+        descriptions = {
+            "automatic_important": "The assistant may proactively store durable information it judges important.",
+            "ask_when_unsure": "The assistant should ask the user when it is uncertain whether information belongs in durable memory.",
+            "explicit_only": "The assistant should write durable memory only when the user explicitly asks it to do so.",
+        }
+        created = _insert_memory(
+            conn,
+            content=descriptions[policy],
+            summary_short=f"Memory policy: {policy}",
+            memory_type="preference",
+            source="polaris-onboarding",
+            importance_score=1.0,
+            confidence_score=1.0,
+            tags="user-profile,onboarding,memory-policy,guardrail",
+            layer_code="core",
+            area_code="preferences",
+            state_code="validated",
+            scope_code="global",
+            identity_weight=0.7,
+            project_key=None,
+            entry_type="user_profile",
+            truth_kind="decision",
+            title=f"Memory policy: {policy}",
+            source_context="Chosen explicitly by the user during Polaris onboarding.",
+            source_event_ref="polaris-onboarding:v1:memory_policy",
+            visibility_scope="private",
+            importance_level="high",
+            priority="high",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    if step == "memory_exclusions":
+        text = normalize_required_text(str(value), "memory_exclusions")
+        created = _insert_memory(
+            conn,
+            content=f"Durable-memory exclusion requested by the user: {text}",
+            summary_short="User memory exclusion",
+            memory_type="guardrail",
+            source="polaris-onboarding",
+            importance_score=1.0,
+            confidence_score=1.0,
+            tags="user-profile,onboarding,memory-exclusion,guardrail",
+            layer_code="core",
+            area_code="preferences",
+            state_code="validated",
+            scope_code="global",
+            identity_weight=0.8,
+            project_key=None,
+            entry_type="user_profile",
+            truth_kind="decision",
+            title="User memory exclusion",
+            source_context="Provided explicitly by the user during Polaris onboarding.",
+            source_event_ref="polaris-onboarding:v1:memory_exclusions",
+            visibility_scope="private",
+            importance_level="high",
+            priority="high",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    if step == "first_project":
+        project = normalize_required_text(str(value), "first_project")
+        created = _insert_memory(
+            conn,
+            content=f"The user's first Polaris project is {project}.",
+            summary_short=f"Initial project: {project}",
+            memory_type="project_checkpoint",
+            source="polaris-onboarding",
+            importance_score=0.8,
+            confidence_score=1.0,
+            tags="onboarding,project,initial-project",
+            layer_code="core",
+            area_code="project",
+            state_code="validated",
+            scope_code="project",
+            identity_weight=0.0,
+            project_key=project,
+            entry_type="project",
+            truth_kind="fact",
+            title=f"Initial project: {project}",
+            source_context="Created from the user's explicit first-project choice during onboarding.",
+            source_event_ref="polaris-onboarding:v1:first_project",
+            importance_level="high",
+            priority="normal",
+            ensure_embedding=False,
+        )
+        created_ids.append(int(created["id"]))
+        return created_ids
+
+    return []
+
+
+@mcp.tool
+def get_polaris_onboarding() -> dict[str, Any]:
+    """Return first-run onboarding state and the single next question ChatGPT should ask the user."""
+    conn = get_db_connection()
+    try:
+        payload = build_onboarding_payload(conn)
+        conn.commit()
+        return payload
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def advance_polaris_onboarding(
+    step: str,
+    value: str | None = None,
+    skip: bool = False,
+) -> dict[str, Any]:
+    """Persist one explicit onboarding answer, then return the next question. memory_policy uses automatic_important, ask_when_unsure or explicit_only."""
+    conn = get_db_connection()
+    try:
+        state = advance_onboarding_state(conn, step=step, value=value, skip=bool(skip))
+        saved_value = state.get("answers", {}).get(str(step).strip().casefold())
+        created_ids = _persist_onboarding_answer(conn, step=str(step).strip().casefold(), value=saved_value)
+        conn.commit()
+        payload = build_onboarding_payload(conn)
+        payload["created_memory_ids"] = created_ids
+        return payload
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def skip_polaris_onboarding(reason: str | None = None) -> dict[str, Any]:
+    """Skip the remaining first-run questions without disabling Polaris or its memory tools."""
+    conn = get_db_connection()
+    try:
+        skip_onboarding_state(conn, reason=reason)
+        conn.commit()
+        return build_onboarding_payload(conn)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 @mcp.tool
 def bootstrap_agent_context(project_key: str | None = None, limit: int = 24) -> dict[str, Any]:
-    """Restore project-scoped continuity; with no project selected, return an empty neutral bootstrap."""
-    return build_bootstrap_agent_context_payload(
+    """Restore continuity. On first run, also tell ChatGPT to guide the user through Polaris onboarding one question at a time."""
+    payload = build_bootstrap_agent_context_payload(
         project_key=project_key,
         limit=limit,
         get_db_connection=get_db_connection,
@@ -6692,6 +6964,16 @@ def bootstrap_agent_context(project_key: str | None = None, limit: int = 24) -> 
         enrich_memory_dict=enrich_memory_dict,
         normalize_optional_text=normalize_optional_text,
     )
+    conn = get_db_connection()
+    try:
+        onboarding = build_onboarding_payload(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    payload["onboarding"] = onboarding
+    if onboarding.get("onboarding_required"):
+        payload["assistant_instruction"] = onboarding.get("assistant_instruction")
+    return payload
 
 
 @mcp.tool

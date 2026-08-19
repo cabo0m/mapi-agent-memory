@@ -20,6 +20,9 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `steward_after_action` | Steward after action. | `preview_memory_steward_after_action` | `reader` | `R0` | read | no | no | no | no |
 | `steward_session_close` | Steward session close. | `preview_memory_steward_session_close` | `reader` | `R0` | read | no | no | no | no |
 | `steward_nightly` | Steward nightly. | `preview_memory_steward_nightly` | `reader` | `R0` | read | no | no | no | no |
+| `onboarding_status` | Onboarding status. | `get_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
+| `onboarding_advance` | Onboarding advance. | `advance_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
+| `onboarding_skip` | Onboarding skip. | `skip_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `self_snapshot` | Self snapshot. | `get_agent_self_snapshot` | `reader` | `R0` | read | no | no | no | no |
 | `commitment_ledger` | Commitment ledger. | `get_agent_commitment_ledger` | `reader` | `R0` | read | no | no | no | no |
 | `autobiographical_timeline` | Autobiographical timeline. | `get_agent_autobiographical_timeline` | `reader` | `R0` | read | no | no | no | no |

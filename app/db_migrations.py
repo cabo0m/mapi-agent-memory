@@ -2069,6 +2069,12 @@ def _migration_0034_recall_importance_decoupling(conn: sqlite3.Connection) -> No
     )
 
 
+def _migration_0035_polaris_onboarding(conn: sqlite3.Connection) -> None:
+    from app.runtime.onboarding import ensure_onboarding_schema
+
+    ensure_onboarding_schema(conn)
+
+
 MIGRATION_SEQUENCE = [
     ("0001_memory_core", _migration_0001_memory_core),
     ("0002_timeline_schema", _migration_0002_timeline_schema),
@@ -2104,6 +2110,7 @@ MIGRATION_SEQUENCE = [
     ("0032_retire_bridge_mailbox", _migration_0032_retire_bridge_mailbox),
     ("0033_mcp_idempotency_requests", _migration_0033_mcp_idempotency_requests),
     ("0034_recall_importance_decoupling", _migration_0034_recall_importance_decoupling),
+    ("0035_polaris_onboarding", _migration_0035_polaris_onboarding),
 ]
 
 

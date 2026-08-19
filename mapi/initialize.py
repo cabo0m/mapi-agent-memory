@@ -299,20 +299,8 @@ def _seed_self_model(db_path: Path, *, validated: Mapping[str, Any]) -> list[int
         display = str(validated["agent_display_name"])
         definitions = [
             {
-                "event": f"mapi-init:{subject}:identity",
-                "content": f"{display} is the configured agent identity for this MAPI instance.",
-                "summary": f"Agent identity: {display}",
-                "memory_type": "identity",
-                "entry_type": "user_profile",
-                "truth_kind": "fact",
-                "tags": f"agent-self,self-model,self-evidence,identity,bootstrap,subject:{subject},agent:{subject}",
-                "layer_code": "identity",
-                "area_code": "identity",
-                "identity_weight": 1.0,
-            },
-            {
                 "event": f"mapi-init:{subject}:namespace-guardrail",
-                "content": f"Self evidence for {display} belongs in project namespace {project}; customer/project memories must remain separate.",
+                "content": f"Self evidence for the assistant belongs in project namespace {project}; customer/project memories must remain separate.",
                 "summary": "Keep agent self evidence separate from customer projects",
                 "memory_type": "guardrail",
                 "entry_type": "decision",
@@ -323,6 +311,22 @@ def _seed_self_model(db_path: Path, *, validated: Mapping[str, Any]) -> list[int
                 "identity_weight": 0.8,
             },
         ]
+        if str(validated.get("mode") or "") != "vps-remote-auth":
+            definitions.insert(
+                0,
+                {
+                    "event": f"mapi-init:{subject}:identity",
+                    "content": f"{display} is the configured agent identity for this MAPI instance.",
+                    "summary": f"Agent identity: {display}",
+                    "memory_type": "identity",
+                    "entry_type": "user_profile",
+                    "truth_kind": "fact",
+                    "tags": f"agent-self,self-model,self-evidence,identity,bootstrap,subject:{subject},agent:{subject}",
+                    "layer_code": "identity",
+                    "area_code": "identity",
+                    "identity_weight": 1.0,
+                },
+            )
         ids: list[int] = []
         for item in definitions:
             row = conn.execute("SELECT id FROM memories WHERE source_event_ref=? LIMIT 1", (item["event"],)).fetchone()

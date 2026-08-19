@@ -57,7 +57,7 @@ def test_fresh_local_init_creates_private_runtime_state_and_self_model(tmp_path:
     root = tmp_path / "instance"
     result = initialize_instance(_options(root))
     assert result["status"] == "ready_to_start"
-    assert result["migration_tail"] == "0034_recall_importance_decoupling"
+    assert result["migration_tail"] == "0035_polaris_onboarding"
     assert result["doctor_status"] in {"READY", "ATTENTION"}
     assert result["safety"] == {
         "existing_state_overwritten": False,
@@ -88,7 +88,7 @@ def test_resume_is_idempotent_and_does_not_duplicate_self_evidence(tmp_path: Pat
     second = initialize_instance(_options(root, resume=True))
     assert second["status"] == "ready_to_start"
     assert second["migrations_applied_now"] == []
-    assert second["migration_tail"] == "0034_recall_importance_decoupling"
+    assert second["migration_tail"] == "0035_polaris_onboarding"
     assert second["self_memory_ids"] == first["self_memory_ids"]
     assert len(_memory_rows(root / "data" / "mapi.db")) == 2
 
@@ -210,6 +210,19 @@ def test_remote_auth_init_generates_dynamic_registration_instance_without_static
     assert env["MAPI_REMOTE_OAUTH_REDIRECT_URIS"] == ""
     assert env["MAPI_REMOTE_OWNER_LOGIN"] == "michal"
     assert env["MAPI_REMOTE_OWNER_PASSWORD_HASH"] == password_hash
+    rows = _memory_rows(root / "data" / "mapi.db")
+    assert len(rows) == 1
+    assert rows[0]["memory_type"] == "guardrail"
+    assert rows[0]["source_event_ref"].endswith(":namespace-guardrail")
+    conn = sqlite3.connect(root / "data" / "mapi.db")
+    conn.row_factory = sqlite3.Row
+    try:
+        onboarding = conn.execute("SELECT status, current_step, answers_json FROM polaris_onboarding WHERE id=1").fetchone()
+        assert onboarding["status"] == "not_started"
+        assert onboarding["current_step"] == "agent_name"
+        assert onboarding["answers_json"] == "{}"
+    finally:
+        conn.close()
 
 
 def test_remote_auth_requires_owner_password_hash(tmp_path: Path) -> None:
