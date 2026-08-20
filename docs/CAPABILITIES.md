@@ -24,6 +24,10 @@ This file is generated from the public workshop registry. Run `mapi-capabilities
 | `onboarding_advance` | Onboarding advance. | `advance_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `onboarding_revise` | Onboarding revise. | `revise_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
 | `onboarding_skip` | Onboarding skip. | `skip_polaris_onboarding` | `reader` | `R0` | read | no | no | no | no |
+| `self_healing_status` | Self healing status. | `get_memory_self_healing_status` | `reader` | `R0` | read | no | no | no | no |
+| `self_healing_issue` | Self healing issue. | `get_memory_self_healing_issue` | `reader` | `R0` | read | no | no | no | no |
+| `self_healing_propose` | Self healing propose. | `propose_memory_self_healing_resolution` | `agent` | `R1` | write | no | yes | no | no |
+| `self_healing_confirm` | Self healing confirm. | `confirm_memory_self_healing_resolution` | `maintainer` | `R2` | read | no | no | no | no |
 | `self_snapshot` | Self snapshot. | `get_agent_self_snapshot` | `reader` | `R0` | read | no | no | no | no |
 | `commitment_ledger` | Commitment ledger. | `get_agent_commitment_ledger` | `reader` | `R0` | read | no | no | no | no |
 | `autobiographical_timeline` | Autobiographical timeline. | `get_agent_autobiographical_timeline` | `reader` | `R0` | read | no | no | no | no |

@@ -109,6 +109,62 @@ def install_systemd_service(
     }
 
 
+
+def maintenance_unit_names(service_name: str) -> tuple[str, str]:
+    base = normalize_systemd_service_name(service_name)[:-8]
+    return f"{base}-maintenance.service", f"{base}-maintenance.timer"
+
+
+def install_systemd_maintenance_timer(
+    service_unit_path: str | Path,
+    timer_unit_path: str | Path,
+    *,
+    service_name: str,
+    allow_sudo_prompt: bool,
+    runner: Callable[[Sequence[str]], CommandResult] = _default_runner,
+) -> dict[str, Any]:
+    service_source = Path(service_unit_path).expanduser().resolve()
+    timer_source = Path(timer_unit_path).expanduser().resolve()
+    if not service_source.is_file() or not timer_source.is_file():
+        raise RuntimeError("generated_maintenance_systemd_unit_missing")
+    if not systemd_available():
+        raise RuntimeError("systemd_not_available")
+    prefix = _privilege_prefix(allow_prompt=allow_sudo_prompt)
+    maintenance_service, maintenance_timer = maintenance_unit_names(service_name)
+    service_destination = Path("/etc/systemd/system") / maintenance_service
+    timer_destination = Path("/etc/systemd/system") / maintenance_timer
+    commands = [
+        [*prefix, "install", "-m", "0644", str(service_source), str(service_destination)],
+        [*prefix, "install", "-m", "0644", str(timer_source), str(timer_destination)],
+        [*prefix, "systemctl", "daemon-reload"],
+        [*prefix, "systemctl", "enable", "--now", maintenance_timer],
+    ]
+    results: list[dict[str, Any]] = []
+    for argv in commands:
+        result = runner(argv)
+        results.append({
+            "argv": list(result.argv),
+            "returncode": int(result.returncode),
+            "stdout": result.stdout[-2000:],
+            "stderr": result.stderr[-2000:],
+        })
+        if result.returncode != 0:
+            raise RuntimeError("systemd_maintenance_install_failed:" + Path(argv[-1]).name)
+    enabled = runner(["systemctl", "is-enabled", maintenance_timer])
+    active = runner(["systemctl", "is-active", maintenance_timer])
+    timer_enabled = enabled.returncode == 0 and enabled.stdout.strip() == "enabled"
+    timer_active = active.returncode == 0 and active.stdout.strip() == "active"
+    return {
+        "status": "active" if timer_enabled and timer_active else "installed_not_active",
+        "service_name": maintenance_service,
+        "timer_name": maintenance_timer,
+        "service_destination": str(service_destination),
+        "timer_destination": str(timer_destination),
+        "enabled": timer_enabled,
+        "active": timer_active,
+        "commands": results,
+    }
+
 def wait_for_listener(host: str, port: int, *, timeout_seconds: float = 12.0, interval_seconds: float = 0.25) -> dict[str, Any]:
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
     attempts = 0

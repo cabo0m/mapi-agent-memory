@@ -2075,6 +2075,12 @@ def _migration_0035_polaris_onboarding(conn: sqlite3.Connection) -> None:
     ensure_onboarding_schema(conn)
 
 
+def _migration_0036_memory_self_healing(conn: sqlite3.Connection) -> None:
+    from app.memory.self_healing import ensure_self_healing_schema
+
+    ensure_self_healing_schema(conn)
+
+
 MIGRATION_SEQUENCE = [
     ("0001_memory_core", _migration_0001_memory_core),
     ("0002_timeline_schema", _migration_0002_timeline_schema),
@@ -2111,6 +2117,7 @@ MIGRATION_SEQUENCE = [
     ("0033_mcp_idempotency_requests", _migration_0033_mcp_idempotency_requests),
     ("0034_recall_importance_decoupling", _migration_0034_recall_importance_decoupling),
     ("0035_polaris_onboarding", _migration_0035_polaris_onboarding),
+    ("0036_memory_self_healing", _migration_0036_memory_self_healing),
 ]
 
 

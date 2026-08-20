@@ -186,6 +186,7 @@ from app.memory.current_state import (
     resolve_current_memory_state,
 )
 from app.memory import hygiene as memory_hygiene
+from app.memory import self_healing as memory_self_healing
 from app.memory.write_routing import (
     WRITE_RESULT_SCHEMA,
     memory_write_preflight,
@@ -5609,6 +5610,116 @@ def get_memory_current_state_inventory(
         conn.close()
 
 
+def get_memory_self_healing_status() -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        return memory_self_healing.get_self_healing_status(conn)
+    finally:
+        conn.close()
+
+
+def get_memory_self_healing_issue(issue_id: int, include_content: bool = True) -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        return memory_self_healing.get_self_healing_issue(
+            conn, issue_id=int(issue_id), include_content=bool(include_content)
+        )
+    finally:
+        conn.close()
+
+
+def propose_memory_self_healing_resolution(
+    issue_id: int,
+    selected_memory_id: int,
+    confidence: float,
+    rationale: str,
+) -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        result = memory_self_healing.propose_self_healing_resolution(
+            conn,
+            issue_id=int(issue_id),
+            selected_memory_id=int(selected_memory_id),
+            confidence=float(confidence),
+            rationale=normalize_required_text(rationale, "rationale"),
+        )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def confirm_memory_self_healing_resolution(issue_id: int, approve: bool) -> dict[str, Any]:
+    if not bool(approve):
+        conn = get_db_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            result = memory_self_healing.confirm_self_healing_resolution(
+                conn, issue_id=int(issue_id), approve=False, insert_event=insert_memory_event
+            )
+            conn.commit()
+            return result
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    from mapi.maintenance import _stamp, _verified_backup
+
+    probe_conn = get_db_connection()
+    try:
+        database_row = probe_conn.execute("PRAGMA database_list").fetchone()
+        db_path = Path(str(database_row[2])).resolve()
+    finally:
+        probe_conn.close()
+    backup_dir = Path(os.environ.get("MAPI_BACKUP_DIR") or (db_path.parent.parent / "backups")).resolve()
+    backup = _verified_backup(db_path, backup_dir, stamp="user-self-healing-" + _stamp())
+    conn = get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        result = memory_self_healing.confirm_self_healing_resolution(
+            conn, issue_id=int(issue_id), approve=True, insert_event=insert_memory_event
+        )
+        queue_refresh = memory_self_healing.scan_self_healing_issues(conn)
+        current_inventory = get_memory_current_state_inventory_payload(
+            conn, project_key=None, limit=1000, include_debug=False
+        )
+        if int((current_inventory.get("summary") or {}).get("critical_issue_count") or 0) > 0:
+            raise ValueError("self_healing_post_repair_current_state_failed")
+        integrity = get_memory_lifecycle_integrity_report_payload(
+            conn,
+            memory_id=None,
+            project_key=None,
+            scope_code=None,
+            include_archived=True,
+            limit=500,
+            sample_limit=100,
+            include_debug=False,
+            row_to_dict=row_to_dict,
+            enrich_memory_dict=enrich_memory_dict,
+        )
+        if int((integrity.get("summary") or {}).get("critical_issues") or 0) > 0:
+            raise ValueError("self_healing_post_repair_integrity_failed")
+        conn.commit()
+        return {
+            **result,
+            "backup": backup,
+            "queue_refresh": queue_refresh,
+            "post_repair_current_state": current_inventory,
+            "post_repair_integrity": integrity,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_memory_lifecycle_integrity_report(
     memory_id: int | None = None,
     project_key: str | None = None,
@@ -7044,6 +7155,21 @@ def bootstrap_agent_context(project_key: str | None = None, limit: int = 24) -> 
     payload["onboarding"] = onboarding
     if onboarding.get("onboarding_required"):
         payload["assistant_instruction"] = onboarding.get("assistant_instruction")
+        payload["memory_self_healing"] = {
+            "schema": memory_self_healing.SELF_HEALING_NOTICE_SCHEMA,
+            "status": "deferred_until_onboarding_complete",
+            "visible_to_user": False,
+        }
+        return payload
+
+    conn = get_db_connection()
+    try:
+        healing_notice = memory_self_healing.build_self_healing_notice(conn)
+    finally:
+        conn.close()
+    payload["memory_self_healing"] = healing_notice
+    if healing_notice.get("assistant_instruction"):
+        payload["assistant_instruction"] = healing_notice["assistant_instruction"]
     return payload
 
 

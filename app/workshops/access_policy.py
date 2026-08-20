@@ -65,6 +65,7 @@ PROTECTED_LIFECYCLE_TOOLS = frozenset(
         "apply_memory_hygiene",
         "rollback_memory_hygiene_run",
         "apply_memory_provenance_backfill",
+
     }
 )
 
@@ -97,6 +98,7 @@ MAINTENANCE_TOOLS = frozenset(
         "run_sandman_model_queue_canary",
         "run_sandman_v1",
         "run_sandman_ai",
+        "confirm_memory_self_healing_resolution",
     }
 )
 
@@ -126,6 +128,7 @@ OPERATOR_WRITE_TOOLS = frozenset(
         "archive_conversation",
         "propose_memory",
         "create_ingest_item",
+        "propose_memory_self_healing_resolution",
     }
 )
 
@@ -139,6 +142,7 @@ BACKUP_REQUIRED_TOOLS = frozenset(
         "apply_memory_hygiene",
         "rollback_memory_hygiene_run",
         "apply_memory_provenance_backfill",
+        "confirm_memory_self_healing_resolution",
     }
 )
 

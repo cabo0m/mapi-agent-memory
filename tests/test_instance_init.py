@@ -57,7 +57,7 @@ def test_fresh_local_init_creates_private_runtime_state_and_self_model(tmp_path:
     root = tmp_path / "instance"
     result = initialize_instance(_options(root))
     assert result["status"] == "ready_to_start"
-    assert result["migration_tail"] == "0035_polaris_onboarding"
+    assert result["migration_tail"] == "0036_memory_self_healing"
     assert result["doctor_status"] in {"READY", "ATTENTION"}
     assert result["safety"] == {
         "existing_state_overwritten": False,
@@ -88,7 +88,7 @@ def test_resume_is_idempotent_and_does_not_duplicate_self_evidence(tmp_path: Pat
     second = initialize_instance(_options(root, resume=True))
     assert second["status"] == "ready_to_start"
     assert second["migrations_applied_now"] == []
-    assert second["migration_tail"] == "0035_polaris_onboarding"
+    assert second["migration_tail"] == "0036_memory_self_healing"
     assert second["self_memory_ids"] == first["self_memory_ids"]
     assert len(_memory_rows(root / "data" / "mapi.db")) == 2
 
@@ -309,6 +309,16 @@ def test_vps_service_install_marks_listener_ready_and_reports_public_address(tmp
     )
     monkeypatch.setattr(
         init_module,
+        "install_systemd_maintenance_timer",
+        lambda *args, **kwargs: {
+            "status": "active",
+            "active": True,
+            "enabled": True,
+            "timer_name": "mapi-maintenance.timer",
+        },
+    )
+    monkeypatch.setattr(
+        init_module,
         "wait_for_listener",
         lambda host, port: {"status": "ready", "host": host, "port": port, "attempts": 1},
     )
@@ -364,6 +374,16 @@ def test_custom_service_name_flows_through_init_and_generated_unit(tmp_path: Pat
         return {"status": "active", "active": True, "service_name": service_name}
 
     monkeypatch.setattr(init_module, "install_systemd_service", install)
+    monkeypatch.setattr(
+        init_module,
+        "install_systemd_maintenance_timer",
+        lambda *args, **kwargs: {
+            "status": "active",
+            "active": True,
+            "enabled": True,
+            "timer_name": "polaris-maintenance.timer",
+        },
+    )
     monkeypatch.setattr(init_module, "wait_for_listener", lambda host, port: {"status": "ready", "host": host, "port": port})
     monkeypatch.setattr(doctor_module, "collect_doctor_report", lambda **kwargs: {"status": "READY", "findings": []})
 
@@ -385,6 +405,13 @@ def test_custom_service_name_flows_through_init_and_generated_unit(tmp_path: Pat
     assert str(captured["unit_path"]).endswith("polaris.service")
     assert result["system_service"]["service_name"] == "polaris.service"
     assert result["artifacts"]["systemd_unit"].endswith("polaris.service")
+    assert result["artifacts"]["maintenance_systemd_service"].endswith("polaris-maintenance.service")
+    assert result["artifacts"]["maintenance_systemd_timer"].endswith("polaris-maintenance.timer")
+    assert result["maintenance_service"]["active"] is True
+    maintenance_service_text = Path(result["artifacts"]["maintenance_systemd_service"]).read_text(encoding="utf-8")
+    maintenance_timer_text = Path(result["artifacts"]["maintenance_systemd_timer"]).read_text(encoding="utf-8")
+    assert "-m mapi.maintenance" in maintenance_service_text
+    assert "Persistent=true" in maintenance_timer_text
     assert result["initial_backup"]["status"] == "created"
 
 
@@ -404,6 +431,16 @@ def test_final_doctor_runs_after_service_start(tmp_path: Path, monkeypatch: pyte
         return {"status": "READY", "findings": []}
 
     monkeypatch.setattr(init_module, "install_systemd_service", install)
+    monkeypatch.setattr(
+        init_module,
+        "install_systemd_maintenance_timer",
+        lambda *args, **kwargs: {
+            "status": "active",
+            "active": True,
+            "enabled": True,
+            "timer_name": "mapi-maintenance.timer",
+        },
+    )
     monkeypatch.setattr(init_module, "wait_for_listener", lambda host, port: {"status": "ready", "host": host, "port": port})
     monkeypatch.setattr(doctor_module, "collect_doctor_report", doctor)
 

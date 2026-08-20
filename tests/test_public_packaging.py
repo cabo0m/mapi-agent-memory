@@ -15,7 +15,7 @@ def test_fresh_migration_reaches_current_tail(tmp_path: Path) -> None:
         connection.row_factory = sqlite3.Row
         db_migrations.apply_all_migrations(connection)
         versions = sorted(db_migrations.applied_migration_versions(connection))
-    assert versions[-1] == "0035_polaris_onboarding"
+    assert versions[-1] == "0036_memory_self_healing"
 
 
 def test_demo_seed_is_deterministic_and_repeatable(tmp_path: Path) -> None:

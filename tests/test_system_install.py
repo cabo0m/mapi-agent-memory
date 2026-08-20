@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 import mapi.system_install as system_install
-from mapi.system_install import CommandResult, install_systemd_service, mcp_connection_urls
+from mapi.system_install import (
+    CommandResult,
+    install_systemd_maintenance_timer,
+    install_systemd_service,
+    maintenance_unit_names,
+    mcp_connection_urls,
+)
 
 
 def test_connection_urls_select_public_origin_when_configured() -> None:
@@ -101,3 +107,41 @@ def test_systemd_install_supports_custom_service_name(tmp_path: Path, monkeypatc
 def test_invalid_systemd_service_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="invalid_systemd_service_name"):
         system_install.normalize_systemd_service_name("../wrong")
+
+
+def test_maintenance_unit_names_follow_main_service_name() -> None:
+    assert maintenance_unit_names("polaris") == ("polaris-maintenance.service", "polaris-maintenance.timer")
+    assert maintenance_unit_names("client-a.service") == ("client-a-maintenance.service", "client-a-maintenance.timer")
+
+
+def test_systemd_maintenance_timer_installs_and_enables_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = tmp_path / "polaris-maintenance.service"
+    timer = tmp_path / "polaris-maintenance.timer"
+    service.write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n", encoding="utf-8")
+    timer.write_text("[Timer]\nOnCalendar=daily\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv):
+        values = [str(item) for item in argv]
+        calls.append(values)
+        if values[-2:] == ["is-enabled", "polaris-maintenance.timer"]:
+            return CommandResult(tuple(values), 0, "enabled\n", "")
+        if values[-2:] == ["is-active", "polaris-maintenance.timer"]:
+            return CommandResult(tuple(values), 0, "active\n", "")
+        return CommandResult(tuple(values), 0, "", "")
+
+    monkeypatch.setattr(system_install, "systemd_available", lambda: True)
+    monkeypatch.setattr(system_install, "_privilege_prefix", lambda allow_prompt: [])
+    result = install_systemd_maintenance_timer(
+        service,
+        timer,
+        service_name="polaris",
+        allow_sudo_prompt=False,
+        runner=runner,
+    )
+
+    assert result["status"] == "active"
+    assert result["timer_name"] == "polaris-maintenance.timer"
+    assert calls[0][-1].replace("\\", "/") == "/etc/systemd/system/polaris-maintenance.service"
+    assert calls[1][-1].replace("\\", "/") == "/etc/systemd/system/polaris-maintenance.timer"
+    assert calls[3] == ["systemctl", "enable", "--now", "polaris-maintenance.timer"]

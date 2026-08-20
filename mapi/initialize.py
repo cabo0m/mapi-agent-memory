@@ -21,7 +21,9 @@ from app.runtime.owner_credentials import valid_owner_password_hash
 from mapi.backup import ensure_initial_backup
 from mapi.env import default_instance_root, parse_environment_file
 from mapi.system_install import (
+    install_systemd_maintenance_timer,
     install_systemd_service,
+    maintenance_unit_names,
     mcp_connection_urls,
     normalize_systemd_service_name,
     probe_http_endpoint,
@@ -267,6 +269,19 @@ def render_systemd_unit(*, root: Path, env_file: Path, service_user: str) -> str
     return f"""[Unit]\nDescription=MAPI Agent Memory MCP Runtime\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser={service_user}\nWorkingDirectory={root}\nEnvironmentFile={env_file}\nExecStart={_systemd_exec_start()}\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=30\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=multi-user.target\n"""
 
 
+def render_maintenance_systemd_unit(
+    *, root: Path, env_file: Path, service_user: str, service_name: str
+) -> str:
+    main_service = normalize_systemd_service_name(service_name)
+    python = str(Path(sys.executable).resolve())
+    return f"""[Unit]\nDescription=MAPI automatic memory self-healing\nAfter={main_service}\nWants={main_service}\nConditionPathExists={env_file}\n\n[Service]\nType=oneshot\nUser={service_user}\nWorkingDirectory={root}\nEnvironmentFile={env_file}\nExecStart={python} -m mapi.maintenance --root {root} --apply-safe-metadata --json\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nNice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n"""
+
+
+def render_maintenance_systemd_timer(*, service_name: str) -> str:
+    maintenance_service, _maintenance_timer = maintenance_unit_names(service_name)
+    return f"""[Unit]\nDescription=Run MAPI automatic memory self-healing nightly\n\n[Timer]\nOnCalendar=*-*-* 03:17:00 UTC\nRandomizedDelaySec=20m\nPersistent=true\nUnit={maintenance_service}\n\n[Install]\nWantedBy=timers.target\n"""
+
+
 def render_proxy_security_template(*, public_url: str, port: int, remote_auth_enabled: bool) -> str:
     host = urlparse(public_url).netloc
     if remote_auth_enabled:
@@ -450,6 +465,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
     operator_steps: list[str] = []
     connection = mcp_connection_urls(public_origin=validated.get("public_url"), port=int(options.port))
     service_result: dict[str, Any] = {"status": "not_requested", "active": False}
+    maintenance_service_result: dict[str, Any] = {"status": "not_requested", "active": False}
     listener_result: dict[str, Any] = {"status": "not_checked"}
     loopback_probe: dict[str, Any] = {"status": "not_checked", "url": connection["loopback_mcp_url"]}
     public_probe: dict[str, Any] = {
@@ -461,8 +477,18 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         service_user = _text(options.service_user) or getpass.getuser()
         service_name = str(validated["service_name"])
         systemd_path = generated_dir / service_name
+        maintenance_service_name, maintenance_timer_name = maintenance_unit_names(service_name)
+        maintenance_service_path = generated_dir / maintenance_service_name
+        maintenance_timer_path = generated_dir / maintenance_timer_name
         proxy_path = generated_dir / "reverse-proxy-security-template.txt"
         _write_atomic(systemd_path, render_systemd_unit(root=root, env_file=env_file, service_user=service_user))
+        _write_atomic(
+            maintenance_service_path,
+            render_maintenance_systemd_unit(
+                root=root, env_file=env_file, service_user=service_user, service_name=service_name
+            ),
+        )
+        _write_atomic(maintenance_timer_path, render_maintenance_systemd_timer(service_name=service_name))
         _write_atomic(
             proxy_path,
             render_proxy_security_template(
@@ -471,7 +497,14 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
                 remote_auth_enabled=validated["mode"] == "vps-remote-auth",
             ),
         )
-        artifacts.update({"systemd_unit": str(systemd_path), "proxy_security_template": str(proxy_path)})
+        artifacts.update(
+            {
+                "systemd_unit": str(systemd_path),
+                "maintenance_systemd_service": str(maintenance_service_path),
+                "maintenance_systemd_timer": str(maintenance_timer_path),
+                "proxy_security_template": str(proxy_path),
+            }
+        )
         if options.install_service:
             try:
                 service_result = install_systemd_service(
@@ -482,6 +515,17 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
             except RuntimeError as exc:
                 service_result = {"status": "failed", "active": False, "error": str(exc)}
             if service_result.get("active"):
+                try:
+                    maintenance_service_result = install_systemd_maintenance_timer(
+                        maintenance_service_path,
+                        maintenance_timer_path,
+                        service_name=service_name,
+                        allow_sudo_prompt=bool(options.allow_sudo_prompt),
+                    )
+                except RuntimeError as exc:
+                    maintenance_service_result = {
+                        "status": "failed", "active": False, "error": str(exc)
+                    }
                 listener_result = wait_for_listener("127.0.0.1", int(options.port))
                 if listener_result.get("status") == "ready" and options.verify_endpoint:
                     loopback_probe = probe_http_endpoint(str(connection["loopback_mcp_url"]))
@@ -493,6 +537,10 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
                     f"sudo cp {systemd_path} /etc/systemd/system/{service_name}",
                     "sudo systemctl daemon-reload",
                     f"sudo systemctl enable --now {service_name}",
+                    f"sudo cp {maintenance_service_path} /etc/systemd/system/{maintenance_service_name}",
+                    f"sudo cp {maintenance_timer_path} /etc/systemd/system/{maintenance_timer_name}",
+                    "sudo systemctl daemon-reload",
+                    f"sudo systemctl enable --now {maintenance_timer_name}",
                 ]
             )
         proxy_step = (
@@ -538,6 +586,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         {
             "status": connection_status,
             "service": service_result,
+            "maintenance": maintenance_service_result,
             "listener": listener_result,
             "loopback_probe": loopback_probe,
             "public_probe": public_probe,
@@ -573,8 +622,13 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
     artifacts["manifest"] = str(manifest_path)
 
     service_failed = options.install_service and not bool(service_result.get("active"))
+    maintenance_failed = (
+        options.install_service
+        and validated["mode"] != "local"
+        and not bool(maintenance_service_result.get("active"))
+    )
     listener_failed = bool(service_result.get("active")) and listener_result.get("status") != "ready"
-    status = "blocked" if doctor.get("status") == "BLOCKED" or service_failed or listener_failed else ("ready" if connection_status in {"local_listener_ready", "public_endpoint_reachable"} else "ready_to_start")
+    status = "blocked" if doctor.get("status") == "BLOCKED" or service_failed or maintenance_failed or listener_failed else ("ready" if connection_status in {"local_listener_ready", "public_endpoint_reachable"} else "ready_to_start")
     return {
         "status": status,
         "schema": MAPI_INIT_SCHEMA,
@@ -590,6 +644,7 @@ def initialize_instance(options: InitOptions) -> dict[str, Any]:
         "doctor_findings": doctor.get("findings") or [],
         "connection": connection,
         "system_service": service_result,
+        "maintenance_service": maintenance_service_result,
         "artifacts": artifacts,
         "operator_steps": operator_steps,
         "safety": {
