@@ -145,3 +145,17 @@ def test_systemd_maintenance_timer_installs_and_enables_timer(tmp_path: Path, mo
     assert calls[0][-1].replace("\\", "/") == "/etc/systemd/system/polaris-maintenance.service"
     assert calls[1][-1].replace("\\", "/") == "/etc/systemd/system/polaris-maintenance.timer"
     assert calls[3] == ["systemctl", "enable", "--now", "polaris-maintenance.timer"]
+
+
+def test_maintenance_systemd_unit_preserves_virtualenv_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapi.initialize as init_module
+
+    monkeypatch.setattr(init_module.sys, "executable", "venv-python")
+    unit = init_module.render_maintenance_systemd_unit(
+        root=tmp_path / "runtime",
+        env_file=tmp_path / "runtime" / ".env",
+        service_user="mapi",
+        service_name="polaris",
+    )
+    assert "ExecStart=venv-python -m mapi.maintenance" in unit
+    assert "/usr/bin/python" not in unit

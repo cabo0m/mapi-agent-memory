@@ -273,7 +273,7 @@ def render_maintenance_systemd_unit(
     *, root: Path, env_file: Path, service_user: str, service_name: str
 ) -> str:
     main_service = normalize_systemd_service_name(service_name)
-    python = str(Path(sys.executable).resolve())
+    python = sys.executable
     return f"""[Unit]\nDescription=MAPI automatic memory self-healing\nAfter={main_service}\nWants={main_service}\nConditionPathExists={env_file}\n\n[Service]\nType=oneshot\nUser={service_user}\nWorkingDirectory={root}\nEnvironmentFile={env_file}\nExecStart={python} -m mapi.maintenance --root {root} --apply-safe-metadata --json\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nNice=10\nIOSchedulingClass=best-effort\nIOSchedulingPriority=7\n"""
 
 
