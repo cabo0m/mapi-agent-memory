@@ -41,6 +41,7 @@ EXPECTED_VERSIONS = {
     "0033_mcp_idempotency_requests",
     "0034_recall_importance_decoupling",
     "0035_polaris_onboarding",
+    "0036_memory_self_healing",
 }
 
 
@@ -346,10 +347,12 @@ def test_bridge_retirement_upgrade_removes_only_bridge_tables() -> None:
         "0033_mcp_idempotency_requests",
         "0034_recall_importance_decoupling",
         "0035_polaris_onboarding",
+        "0036_memory_self_healing",
     ]
     assert tables_after == (tables_before - {"bridge_messages", "bridge_threads"}) | {
         "mcp_idempotency_requests",
         "polaris_onboarding",
+        "memory_self_healing_issues",
     }
     assert protected_counts_after == protected_counts_before
     assert "0018_bridge_mailbox" in db_migrations.applied_migration_versions(conn)
@@ -357,6 +360,7 @@ def test_bridge_retirement_upgrade_removes_only_bridge_tables() -> None:
     assert "0033_mcp_idempotency_requests" in db_migrations.applied_migration_versions(conn)
     assert "0034_recall_importance_decoupling" in db_migrations.applied_migration_versions(conn)
     assert "0035_polaris_onboarding" in db_migrations.applied_migration_versions(conn)
+    assert "0036_memory_self_healing" in db_migrations.applied_migration_versions(conn)
 
 
 def test_bridge_retirement_drop_is_idempotent() -> None:
