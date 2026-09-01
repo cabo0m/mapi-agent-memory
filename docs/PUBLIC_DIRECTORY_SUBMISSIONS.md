@@ -24,6 +24,15 @@ More cautious alternative:
 
 MAPI is a self-hosted MCP memory server for project decisions, corrections, rules, progress and next steps. It resolves current state while preserving historical records and lineage, separates explicit writes from proposals, and keeps project boundaries visible. Records can carry provenance and confidence metadata. Conflict review, guarded lifecycle operations, preview hashes, audit evidence and rollback support controlled maintenance without treating an opaque vector index as the source of truth. The model-free local core runs on Python and SQLite; optional semantic and provider integrations are disabled by default.
 
+## Reproducible product proofs
+
+MAPI includes deterministic, model-free scenarios for decision supersession and conflicting-source provenance. The proofs use synthetic data on disposable databases: one resolves PostgreSQL as current while retaining the earlier SQLite decision and lineage; the other preserves two conflicting records, their provenance and an unresolved review state without silent overwrite.
+
+- Methodology and expected results: [PRODUCT_PROOFS.md](https://github.com/cabo0m/mapi-agent-memory/blob/main/docs/PRODUCT_PROOFS.md)
+- Reproduction command: `python scripts/run_product_proofs.py`
+
+These scenarios demonstrate specific governance and lineage properties. They are not comparative benchmark results and do not claim that MAPI eliminates hallucinations or guarantees correct memory.
+
 ## Tags
 
 `mcp`, `mcp-server`, `agent-memory`, `persistent-memory`, `project-memory`, `codex`, `chatgpt`, `ai-agents`, `python`, `sqlite`, `self-hosted`, `local-first`, `audit`
@@ -39,4 +48,4 @@ MAPI is a self-hosted MCP memory server for project decisions, corrections, rule
 
 ## Community post copy
 
-MAPI is an open-source, self-hosted project memory server for MCP clients. It helps assistants carry decisions, corrections, rules, progress and next steps across sessions while retaining provenance and auditable history. A model-free demo shows SQLite being superseded by PostgreSQL, with PostgreSQL resolved as current and SQLite preserved as history. The project is a developer preview, runs locally on Python and SQLite, and does not offer hosted SaaS.
+MAPI is an Apache 2.0, self-hosted and local-first project memory server for MCP clients, currently published as a Public Release Candidate / Developer Preview. It helps assistants carry decisions, corrections, rules, progress and next steps across sessions while retaining provenance and auditable history. Reproducible, model-free proofs show SQLite being superseded by PostgreSQL while history remains available, and two conflicting source records remaining visible with provenance instead of being silently overwritten. The project runs locally on Python and SQLite and does not offer hosted SaaS.

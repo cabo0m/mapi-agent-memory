@@ -142,6 +142,26 @@ Previous record ID: 1
 Preview hash: <sha256>
 ```
 
+## Reproducible product proofs
+
+MAPI includes two synthetic, deterministic scenarios for governance and lineage. They run on disposable SQLite databases without an external model or API and produce machine-readable JSON plus a concise human report.
+
+### Decision supersession
+
+SQLite is stored as the earlier decision and PostgreSQL replaces it. MAPI resolves PostgreSQL as the current state while preserving SQLite in history and keeping the `supersedes` relationship auditable.
+
+### Conflict and provenance
+
+Two incompatible backup-time facts are stored with different provenance. MAPI preserves both records and exposes an unresolved conflict instead of silently overwriting one source.
+
+Run both proofs from the repository root:
+
+```bash
+python scripts/run_product_proofs.py
+```
+
+See the [full proof methodology and expected results](docs/PRODUCT_PROOFS.md).
+
 For a controlled lifecycle verification with a disposable database and the `maintainer`
 profile, while confirming that admin remains denied, run:
 
